@@ -1,0 +1,41 @@
+# ─── Dependencies ──────────────────────────────────────────────────────────
+node_modules/
+.pnp/
+.pnp.js
+
+# ─── Build output ──────────────────────────────────────────────────────────
+dist/
+build/
+out/
+*.min.js.map
+
+# ─── Environment + secrets (never commit) ──────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+credentials.json
+service-account*.json
+
+# ─── Logs ──────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ─── Editors / IDEs ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS cruft ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Ventryn agent / Claude Code ───────────────────────────────────────────
+.claude/
