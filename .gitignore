@@ -39,3 +39,7 @@ desktop.ini
 
 # ─── Ventryn agent / Claude Code ───────────────────────────────────────────
 .claude/
+
+# Local browser validation and runtime evidence
+test-results/
+playwright-report/
