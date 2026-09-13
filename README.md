@@ -14,7 +14,9 @@ This uses Windows Package Manager to install Lively if needed, copies the wallpa
 
 For a read-only plan, add `-Preview`. Existing Lively installations and custom library locations are supported. See [operations](OPERATIONS.md) for troubleshooting, updates and removal.
 
-In Lively, select **Customize wallpaper** to change settings that survive restarts. The wallpaper's own settings panel is a temporary preview in Lively; in a normal browser it saves locally when browser storage is available. Lively's native settings also own start at sign-in and pause-on-battery behavior.
+Click the grid's settings button to open its custom panel above desktop shortcuts. The panel comes to the front when opened, stays clear of the taskbar, and saves changes through Lively. Close it with its close button or Escape. In a normal browser, the same panel saves locally when browser storage is available. Lively owns start at sign-in and pause-on-battery behavior.
+
+The desktop panel supports the primary display with Lively's default WebView2 player and per-screen layout. For other display arrangements or the optional Chromium player, use Lively's **Customize wallpaper** command. The Windows package targets x64 Windows 10/11.
 
 The default frame limit is 30 fps. Animation speed stays the same when you lower the frame limit. Freeze Frame preserves the image and still redraws when settings or display dimensions change.
 
@@ -30,4 +32,4 @@ npm run test:install
 npm run package
 ```
 
-Only development checks require npm. Runtime defaults and presets live in `grid-config.js`; the renderer, settings UI and installation each have one source owner. See [AGENTS.md](AGENTS.md) for editing guidance and [OPERATIONS.md](OPERATIONS.md) for release evidence.
+Only development checks require npm. Packaging compiles the small settings window using Windows' .NET Framework compiler and a pinned official WebView2 SDK; its first build needs internet access. Runtime defaults and presets live in `grid-config.js`; the renderer, settings UI and installation each have one source owner. See [AGENTS.md](AGENTS.md) for editing guidance and [OPERATIONS.md](OPERATIONS.md) for release evidence.

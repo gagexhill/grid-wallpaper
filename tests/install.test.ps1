@@ -14,6 +14,12 @@ $metadata = $metadataText | ConvertFrom-Json
 $fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
 $fixtureName = 'grid-wallpaper-install-test-' + [Guid]::NewGuid().ToString('N')
 $fixtureDirectory = Join-Path $fixtureParent $fixtureName
+$registryFixtureId = [Guid]::NewGuid().ToString('N')
+$registryFixtureName = 'grid-wallpaper-test-' + $registryFixtureId
+$registryFixtureKey = 'HKCU:\Software\Classes\' + $registryFixtureName
+$registrySiblingKey = $registryFixtureKey + '-unrelated'
+$registryFixturesReserved = $false
+$configJunctionPath = Join-Path $fixtureDirectory 'linked-host-config\windows-host.json'
 $module = $null
 $assertionCount = 0
 
@@ -37,8 +43,15 @@ function Write-Fixture([string]$Path, [string]$Content) {
 }
 
 try {
+    foreach ($registryPath in @($registryFixtureKey, $registrySiblingKey)) {
+        Assert-Check (-not (Test-Path -LiteralPath $registryPath)) 'Registry fixture keys must not already exist.'
+        $mergedPath = 'Registry::HKEY_CLASSES_ROOT\' + (Split-Path $registryPath -Leaf)
+        Assert-Check (-not (Test-Path -LiteralPath $mergedPath)) 'Registry fixture schemes must not shadow existing registrations.'
+    }
+    $registryFixturesReserved = $true
     $null = [IO.Directory]::CreateDirectory($fixtureDirectory)
     $packageDirectory = Join-Path $fixtureDirectory 'package'
+    $hostBuildDirectory = Join-Path $packageDirectory 'dist\settings-host'
     $normalDataDirectory = Join-Path $fixtureDirectory 'normal-data'
     $storeDataDirectory = Join-Path $fixtureDirectory 'store-data'
     $null = [IO.Directory]::CreateDirectory($packageDirectory)
@@ -47,7 +60,8 @@ try {
     $parseErrors = $null
     $installerAst = [Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$parseTokens, [ref]$parseErrors)
     Assert-Check ($parseErrors.Count -eq 0) 'The installer must parse in Windows PowerShell 5.1.'
-    $helperNames = @('Get-LivelyState', 'Assert-Destination', 'Copy-Runtime')
+    $helperNames = @('Get-LivelyState', 'Assert-Destination', 'Get-RuntimeSource', 'Copy-Runtime',
+        'Assert-SettingsLink', 'Register-SettingsLink', 'Remove-SettingsLink', 'Assert-HostConfig', 'Write-HostConfig', 'Get-LivelyUiPath')
     $helperDefinitions = foreach ($helperName in $helperNames) {
         $helperMatches = @($installerAst.FindAll({
             param($node)
@@ -57,22 +71,53 @@ try {
         $helperMatches[0].Extent.Text
     }
     $normalDataLiteral = "'" + $normalDataDirectory.Replace("'", "''") + "'"
+    $settingsKeyLiteral = "'" + $registryFixtureKey.Replace("'", "''") + "'"
+    $settingsUriLiteral = "'" + $registryFixtureName + ":'"
     $runtimeLiterals = @($runtimeNames | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ', '
     $moduleText = '$ErrorActionPreference = ''Stop''' + "`n" +
         'Set-StrictMode -Version 2.0' + "`n" +
         '$normalDataDirectory = ' + $normalDataLiteral + "`n" +
         '$runtimeFiles = @(' + $runtimeLiterals + ')' + "`n" +
+        '$settingsKey = ' + $settingsKeyLiteral + "`n" +
+        '$integration = [pscustomobject]@{ settingsUri = ' + $settingsUriLiteral + ' }' + "`n" +
         ($helperDefinitions -join "`n`n")
     $modulePath = Join-Path $packageDirectory 'installer-fixture.psm1'
     Write-Fixture $modulePath $moduleText
     foreach ($runtimeName in $runtimeNames) {
-        Write-Fixture (Join-Path $packageDirectory $runtimeName) ('fixture: ' + $runtimeName)
+        $sourceDirectory = if ($runtimeName -match '\.(exe|dll)$') { $hostBuildDirectory } else { $packageDirectory }
+        Write-Fixture (Join-Path $sourceDirectory $runtimeName) ('fixture: ' + $runtimeName)
     }
     Write-Fixture (Join-Path $packageDirectory 'LivelyInfo.json') $metadataText
     Write-Fixture (Join-Path $packageDirectory 'unlisted-note.txt') 'This must never be copied.'
+    Write-Fixture (Join-Path $packageDirectory 'windows-host.json') '{"localOnly":"must not be copied"}'
     $module = Import-Module -Name $modulePath -PassThru -Force -DisableNameChecking
-    $lively = [pscustomobject]@{ DataDirectory = $normalDataDirectory; Store = $false }
+    $lively = [pscustomobject]@{ Executable = (Join-Path $fixtureDirectory 'Lively.exe'); DataDirectory = $normalDataDirectory; Store = $false }
     $settingsPath = Join-Path $normalDataDirectory 'Settings.json'
+
+    Assert-Check ((Get-LivelyUiPath $lively) -ceq (Join-Path $fixtureDirectory 'Plugins\UI\Lively.UI.WinUI.exe')) 'Standalone library refresh must identify the UI under Plugins/UI.'
+    $storeInstallation = [pscustomobject]@{ Executable = (Join-Path $fixtureDirectory 'store package\Lively\Lively.exe'); Store = $true }
+    Assert-Check ((Get-LivelyUiPath $storeInstallation) -ceq (Join-Path $fixtureDirectory 'store package\Lively.UI.WinUI.exe')) 'Store library refresh must identify the UI beside its core directory.'
+    Assert-Check ($runtimeNames -contains 'grid-settings.exe') 'The runtime manifest must include the native settings host.'
+    Assert-Check (@($runtimeNames | Where-Object { $_ -match '\.dll$' }).Count -gt 0) 'The runtime manifest must include native host dependencies.'
+    Assert-Check ((Get-RuntimeSource 'grid-settings.exe') -ceq (Join-Path $hostBuildDirectory 'grid-settings.exe')) 'Source checkouts must resolve built native files under dist/settings-host.'
+    $rootHostSource = Join-Path $packageDirectory 'grid-settings.exe'
+    Write-Fixture $rootHostSource 'package-root host fixture'
+    Assert-Check ((Get-RuntimeSource 'grid-settings.exe') -ceq $rootHostSource) 'Extracted package files must take precedence over development build output.'
+    Assert-Fails { Get-RuntimeSource 'missing-fixture.dll' } 'Missing runtime dependencies must fail clearly.' 'package is incomplete'
+    Assert-Check ($runtimeNames -notcontains 'windows-host.json') 'Machine-specific host configuration must never enter the runtime allowlist.'
+    $packageAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryDirectory 'scripts\package.ps1'), [ref]$parseTokens, [ref]$parseErrors)
+    Assert-Check ($parseErrors.Count -eq 0) 'The package script must parse in Windows PowerShell 5.1.'
+    $packageFileAssignments = @($packageAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$files'
+    }, $true))
+    Assert-Check ($packageFileAssignments.Count -gt 0) 'The package script must declare its file allowlist.'
+    $packageLiteralFiles = @($packageFileAssignments | ForEach-Object {
+        $_.Right.FindAll({ param($node) $node -is [Management.Automation.Language.StringConstantExpressionAst] }, $true) |
+            ForEach-Object { $_.Value }
+    })
+    Assert-Check ($packageLiteralFiles -notcontains 'windows-host.json') 'Machine-specific host configuration must never enter package file additions.'
+    Write-Output 'PASS native runtime source resolution and local configuration exclusion'
 
     $state = Get-LivelyState $lively
     Assert-Check (-not $state.SettingsReady) 'Missing settings must not report a configured library.'
@@ -116,9 +161,10 @@ try {
     Assert-Check ($copiedNames.Count -eq $runtimeNames.Count) 'Only runtime manifest files may be installed.'
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination 'unlisted-note.txt'))) 'Unlisted source files must be excluded.'
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination 'installer-fixture.psm1'))) 'Test helpers must never be copied.'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination 'windows-host.json'))) 'A source-machine host configuration must never be copied.'
     foreach ($runtimeName in $runtimeNames) {
         Assert-Check ((Get-FileHash -LiteralPath (Join-Path $expectedCustomDestination $runtimeName)).Hash -ceq
-            (Get-FileHash -LiteralPath (Join-Path $packageDirectory $runtimeName)).Hash) ('Installed runtime bytes differ: ' + $runtimeName)
+            (Get-FileHash -LiteralPath (Get-RuntimeSource $runtimeName)).Hash) ('Installed runtime bytes differ: ' + $runtimeName)
     }
     Write-Output 'PASS allowlisted and verified runtime installation'
 
@@ -150,9 +196,106 @@ try {
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $blockedDestination $runtimeNames[0]))) 'A target collision must fail before any runtime file is copied.'
     Write-Output 'PASS collisions fail before overwriting files'
 
-    Write-Output ('Installer regression checks passed: ' + $assertionCount + ' assertions. No installed applications or native settings were touched.')
+    $hostConfigPath = Join-Path $expectedCustomDestination 'windows-host.json'
+    Assert-HostConfig $expectedCustomDestination
+    Assert-Check (-not (Test-Path -LiteralPath $hostConfigPath)) 'Host configuration preflight must not create machine-specific files.'
+    Write-HostConfig $expectedCustomDestination $lively
+    $hostConfig = Get-Content -LiteralPath $hostConfigPath -Raw | ConvertFrom-Json
+    Assert-Check (@($hostConfig.PSObject.Properties).Count -eq 3) 'Host configuration must contain only the three required local paths.'
+    Assert-Check ($hostConfig.LivelyExecutable -ceq $lively.Executable) 'Host configuration must use the detected Lively executable.'
+    Assert-Check ($hostConfig.LivelyDataDirectory -ceq $lively.DataDirectory) 'Host configuration must use the detected native data directory.'
+    Assert-Check ($hostConfig.WallpaperDirectory -ceq $expectedCustomDestination) 'Host configuration must use the exact installed wallpaper directory.'
+    $relocatedLively = [pscustomobject]@{ Executable = (Join-Path $fixtureDirectory 'relocated\Lively.exe'); DataDirectory = $storeDataDirectory }
+    Write-HostConfig $expectedCustomDestination $relocatedLively
+    $hostConfig = Get-Content -LiteralPath $hostConfigPath -Raw | ConvertFrom-Json
+    Assert-Check ($hostConfig.LivelyExecutable -ceq $relocatedLively.Executable -and $hostConfig.LivelyDataDirectory -ceq $storeDataDirectory) 'Repeated setup must refresh machine-specific paths from current detection.'
+    $blockedHostDirectory = Join-Path $fixtureDirectory 'blocked-host-config'
+    $blockedHostConfigPath = Join-Path $blockedHostDirectory 'windows-host.json'
+    $null = [IO.Directory]::CreateDirectory($blockedHostConfigPath)
+    Assert-Fails { Assert-HostConfig $blockedHostDirectory } 'Host configuration preflight must reject a directory.' 'regular file'
+    Assert-Fails { Write-HostConfig $blockedHostDirectory $lively } 'A directory may not be overwritten as host configuration.' 'regular file'
+    Assert-Check (Test-Path -LiteralPath $blockedHostConfigPath -PathType Container) 'Host configuration collision handling must preserve directories.'
+    $junctionTarget = Join-Path $fixtureDirectory 'host-config-target'
+    $junctionSentinel = Join-Path $junctionTarget 'preserved.txt'
+    Write-Fixture $junctionSentinel 'preserve linked target'
+    $null = [IO.Directory]::CreateDirectory((Split-Path $configJunctionPath -Parent))
+    $null = New-Item -ItemType Junction -Path $configJunctionPath -Target $junctionTarget
+    Assert-Check ([bool]((Get-Item -LiteralPath $configJunctionPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'The reparse fixture must be an actual directory junction.'
+    Assert-Fails { Assert-HostConfig (Split-Path $configJunctionPath -Parent) } 'Host configuration preflight must reject a reparse point.' 'regular file'
+    Assert-Fails { Write-HostConfig (Split-Path $configJunctionPath -Parent) $lively } 'Host configuration must reject a reparse point.' 'regular file'
+    Assert-Check ((Get-Content -LiteralPath $junctionSentinel -Raw) -ceq 'preserve linked target') 'Rejected reparse points must preserve their targets.'
+    Write-Output 'PASS local host configuration and unsafe target rejection'
+
+    Assert-SettingsLink
+    Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'Checking an available settings scheme must not register it.'
+    Assert-Fails { Register-SettingsLink $blockedHostDirectory } 'A missing host must fail before registration.' 'settings host is missing'
+    Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'A missing host must leave the registry unchanged.'
+    Register-SettingsLink $expectedCustomDestination
+    $commandKey = Join-Path $registryFixtureKey 'shell\open\command'
+    $expectedCommand = '"' + (Join-Path $expectedCustomDestination 'grid-settings.exe') + '"'
+    $registeredCommand = (Get-Item -LiteralPath $commandKey).GetValue('')
+    Assert-Check ($registeredCommand -ceq $expectedCommand) 'The settings command must be the exact quoted host path with no arguments.'
+    Assert-Check ($registeredCommand -notmatch '%(?:1|[Ll]|\*)') 'Settings links must never forward URI payloads.'
+    $registeredKey = Get-Item -LiteralPath $registryFixtureKey
+    Assert-Check ($registeredKey.GetValue('GridWallpaperManaged', 0) -eq 1) 'Registration must mark the exact scheme as managed.'
+    Assert-Check ($registeredKey.GetValueNames() -contains 'URL Protocol') 'Registration must identify the scheme as a URL protocol.'
+    Assert-Check ($registeredKey.GetValue('URL Protocol') -ceq '') 'The URL protocol marker must be an empty string.'
+    $registeredKey.Dispose()
+    Register-SettingsLink $expectedCustomDestination
+    Assert-Check ((Get-Item -LiteralPath $commandKey).GetValue('') -ceq $expectedCommand) 'Repeated settings registration must retain the fixed command.'
+    $relocatedHostDirectory = Join-Path $fixtureDirectory 'relocated host'
+    Write-Fixture (Join-Path $relocatedHostDirectory 'grid-settings.exe') 'This is a path fixture, not an executable.'
+    Register-SettingsLink $relocatedHostDirectory
+    Assert-Check ((Get-Item -LiteralPath $commandKey).GetValue('') -ceq ('"' + (Join-Path $relocatedHostDirectory 'grid-settings.exe') + '"')) 'Registration must update an owned link when the installation directory changes.'
+    Write-Output 'PASS fixed settings host command and repeat registration'
+
+    $null = New-Item -Path $registrySiblingKey
+    $null = New-ItemProperty -LiteralPath $registrySiblingKey -Name 'UnrelatedSentinel' -Value 'preserve sibling' -PropertyType String
+    Remove-SettingsLink
+    Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'Removal must delete the exact owned registration.'
+    Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Removal must preserve unrelated sibling registrations.'
+    Remove-SettingsLink
+    Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Repeated removal must leave unrelated registrations unchanged.'
+    $null = New-Item -Path $registryFixtureKey
+    $null = New-ItemProperty -LiteralPath $registryFixtureKey -Name 'CollisionSentinel' -Value 'preserve existing registration' -PropertyType String
+    Assert-Fails { Assert-SettingsLink } 'An unmarked settings scheme must be rejected.' 'owned by another application'
+    Assert-Fails { Register-SettingsLink $expectedCustomDestination } 'Registration must reject an unmarked existing scheme.' 'owned by another application'
+    Assert-Fails { Remove-SettingsLink } 'Removal must reject an unmarked existing scheme.' 'owned by another application'
+    $null = New-ItemProperty -LiteralPath $registryFixtureKey -Name 'GridWallpaperManaged' -Value 0 -PropertyType DWord
+    Assert-Fails { Register-SettingsLink $expectedCustomDestination } 'A non-owned marker value must also reject registration.' 'owned by another application'
+    Assert-Check ((Get-Item -LiteralPath $registryFixtureKey).GetValue('CollisionSentinel') -ceq 'preserve existing registration') 'Collision handling must preserve existing registration data.'
+    Assert-Check (-not (Test-Path -LiteralPath $commandKey)) 'Collision handling must not create a command.'
+    Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Collision handling must preserve unrelated registrations.'
+    Write-Output 'PASS settings link ownership collisions and exact removal'
+
+    Write-Output ('Installer regression checks passed: ' + $assertionCount + ' assertions. Only isolated temporary files and GUID-owned test registrations were used.')
 } finally {
     if ($module) { Remove-Module -ModuleInfo $module -Force }
+    if ($registryFixturesReserved) {
+        foreach ($registryPath in @($registryFixtureKey, $registrySiblingKey)) {
+            if (-not (Test-Path -LiteralPath $registryPath)) { continue }
+            $registryItem = Get-Item -LiteralPath $registryPath
+            $expectedRegistryName = $registryPath.Replace('HKCU:', 'HKEY_CURRENT_USER')
+            $expectedRegistryRoot = 'HKEY_CURRENT_USER\Software\Classes\grid-wallpaper-test-' + $registryFixtureId
+            if ($registryFixtureId -cnotmatch '^[a-f0-9]{32}$' -or
+                $registryItem.Name -cne $expectedRegistryName -or
+                ($registryItem.Name -cne $expectedRegistryRoot -and $registryItem.Name -cne ($expectedRegistryRoot + '-unrelated'))) {
+                throw 'Refusing to clean a registry key outside the exact GUID-owned test registrations.'
+            }
+            $registryItem.Dispose()
+            Remove-Item -LiteralPath $registryPath -Recurse -Force
+        }
+    }
+    if (Test-Path -LiteralPath $configJunctionPath) {
+        $junctionItem = Get-Item -LiteralPath $configJunctionPath -Force
+        $expectedJunctionPath = Join-Path (Join-Path $fixtureParent $fixtureName) 'linked-host-config\windows-host.json'
+        if ([IO.Path]::GetFullPath($junctionItem.FullName) -cne [IO.Path]::GetFullPath($expectedJunctionPath) -or
+            -not $junctionItem.FullName.StartsWith($fixtureDirectory + '\', [StringComparison]::OrdinalIgnoreCase) -or
+            -not ($junctionItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Refusing to clean a junction outside the exact test fixture path.'
+        }
+        [IO.Directory]::Delete($configJunctionPath)
+    }
     if (Test-Path -LiteralPath $fixtureDirectory) {
         $resolvedFixture = Get-Item -LiteralPath $fixtureDirectory -Force
         $resolvedFullPath = [IO.Path]::GetFullPath($resolvedFixture.FullName).TrimEnd('\')

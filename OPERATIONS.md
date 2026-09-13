@@ -2,9 +2,9 @@
 
 ## Runtime and ownership
 
-`grid-wallpaper.html` loads local CSS, canonical `grid-config.js`, the Canvas renderer and the settings UI in that order. There are no network requests or runtime package dependencies. GitHub issues track current work; [delivery #1](https://github.com/gagexhill/grid-wallpaper/issues/1) owns laptop acceptance and [privacy #6](https://github.com/gagexhill/grid-wallpaper/issues/6) gates public release.
+`grid-wallpaper.html` loads local CSS, canonical `grid-config.js`, the Canvas renderer, the optional native bridge and the settings UI in that order. The web runtime makes no network requests and requires no npm dependencies. The desktop panel ships the official WebView2 SDK libraries and uses the installed Microsoft runtime. GitHub issues track current work; [delivery #1](https://github.com/gagexhill/grid-wallpaper/issues/1) owns laptop acceptance and [privacy #6](https://github.com/gagexhill/grid-wallpaper/issues/6) gates public release.
 
-`grid-config.js` owns browser defaults, ranges and presets. `scripts/lively-properties.cjs` generates the checked-in JSON that Lively requires. Lively stores native customization per display. Its one-way property API cannot save edits made in the wallpaper panel, so the UI describes those as previews. Browser settings use validated local storage; unavailable storage leaves a usable session with an explicit notice.
+`grid-config.js` owns browser defaults, ranges, presets and host link metadata. `scripts/lively-properties.cjs` generates the checked-in native JSON. Lively stores customization per display. The custom desktop window persists through native CLI commands; inline controls in the optional Chromium wallpaper player are session previews because its property callback is one-way. Browser settings use validated local storage; unavailable storage leaves a usable session with an explicit notice.
 
 ## Validate
 
@@ -14,6 +14,7 @@ Use the lockfile with `npm ci`, then run one completed command at a time:
 npm run check
 npm run test:browser
 npm run test:install
+npm run build:settings
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Preview
 npm run package
 ```
@@ -32,6 +33,10 @@ When the thumbnail or metadata changes, setup closes and reopens Lively's librar
 
 Use Lively's library to remove Grid Wallpaper or select another wallpaper. Uninstall Lively through Windows Installed apps only if it is no longer wanted. There is no custom service, scheduled task, background updater or global execution-policy change to undo.
 
+The installer registers a per-user settings link to the fixed installed `grid-settings.exe` command, with no URI arguments. Run `install.ps1 -RemoveSettingsLink` to remove that owned registration. Setup writes machine-specific paths only to the installed `windows-host.json`; that file is excluded from source and packages. The settings window uses a local WebView2 profile under LocalAppData's `Grid Wallpaper` directory and exits when closed. Updates first ask an open settings panel to finish saving and close; they stop if it cannot close safely.
+
+The custom settings panel supports the primary display in Lively's per-screen layout. It uses the same HTML and controls as browser preview, with a borderless normal window and a 16 DIP working-area margin. It does not remain always on top. It validates changes against native property metadata, coalesces slider input, calls native `setprop`, and checks the exact saved value before displaying confirmation. Failed saves stay visible in the panel. Use Lively's native Customize command for other arrangements or the optional Chromium player.
+
 To roll back, retain a previously reviewed release package and rerun its installer. Do not delete the library or host saved settings as a troubleshooting shortcut.
 
 ## Native acceptance
@@ -41,6 +46,8 @@ Record exact source commit, package SHA256, Windows/Lively versions, display con
 ## Packaging and privacy
 
 `wallpaper-files.json` owns the runtime file allowlist used by the installer and packager. `scripts/package.ps1` writes the zip and SHA256 under ignored `dist/`. It excludes Git history, developer dependencies, tests, screenshots and local state. The Windows npm packaging command clears only its child process's inherited `PSModulePath`, allowing Windows PowerShell to resolve its own modules when called through npm from PowerShell 7. This addresses Microsoft's [documented module-path inheritance behavior](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath).
+
+Packaging invokes `scripts/build-settings.ps1`. The build pins Microsoft's WebView2 NuGet SDK, verifies its SHA512 against official metadata, and compiles x64 with Windows' .NET Framework compiler. Outputs and SDK cache stay under `dist/`; the package contains the helper, three required SDK libraries and the SDK license, with no debug symbols or machine configuration. The receiving machine uses the WebView2 Runtime installed with Lively.
 
 Inspect extracted contents before sharing. Keep visibility private until #6 is accepted and public publication is explicitly authorized. History rewrites or credential rotation require an exact remediation plan; never copy sensitive values into tracking comments.
 
@@ -53,5 +60,7 @@ Lively's automatic capture belongs to interactive import and is unavailable to t
 Windows' documented desktop-wallpaper API manages images/slideshows; it is not a Canvas host. Lively is the selected maintained host because it supports HTML, persistent native properties, pause events, WinGet installation and laptop policies without a paid dependency. Wallpaper Engine supports web wallpapers and similar pause policies but adds a purchase/distribution dependency and offers no demonstrated advantage for this renderer.
 
 The small installer adapter is needed because stable Lively `setwp` accepts project folders inside its configured library, while its media importer does not import raw HTML projects. It reads native settings, copies an allowlisted project, and invokes native commands; it does not duplicate the host. Replace that copy step when a reliable native arbitrary-project import command becomes available.
+
+Windows places the wallpaper below desktop shortcuts, so CSS stacking cannot lift a panel above them. Lively's WebView2 player sends user-opened links to Windows, and its generated native editor does not preserve this custom UI. A small window built on Microsoft's official WebView2 WinForms SDK covers that gap while retaining Lively's persistence. It allows only the installed local assets and validates message origin, properties and values. Remove this adapter if Lively provides a reliable native way to host the existing custom panel above icons. The SDK integration follows Microsoft's [WinForms WebView2 guide](https://learn.microsoft.com/en-us/microsoft-edge/webview2/get-started/winforms).
 
 Official references: [Windows wallpaper API](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-idesktopwallpaper), [Lively CLI](https://github.com/rocksdanister/lively/wiki/Command-Line-Controls), [Lively properties](https://github.com/rocksdanister/lively/wiki/Web-Guide-IV-:-Interaction), [web player and cache](https://github.com/rocksdanister/lively/wiki/Web-Player), [pause events](https://github.com/rocksdanister/lively/wiki/Web-Guide-V-:-System-Data), [laptop performance policies](https://github.com/rocksdanister/lively/wiki/Performance), [Wallpaper Engine](https://www.wallpaperengine.io/en).

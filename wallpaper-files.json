@@ -3,9 +3,16 @@
   "grid-wallpaper.css",
   "grid-config.js",
   "grid-wallpaper.js",
+  "grid-native-settings.js",
   "grid-settings.js",
   "LivelyProperties.json",
   "LivelyInfo.json",
   "thumbnail.jpg",
-  "preview.gif"
+  "preview.gif",
+  "windows-integration.json",
+  "grid-settings.exe",
+  "Microsoft.Web.WebView2.Core.dll",
+  "Microsoft.Web.WebView2.WinForms.dll",
+  "WebView2Loader.dll",
+  "webview2-license.txt"
 ]

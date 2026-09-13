@@ -18,6 +18,7 @@ out/
 *.cert
 credentials.json
 service-account*.json
+windows-host.json
 
 # ─── Logs ──────────────────────────────────────────────────────────────────
 *.log

@@ -10,6 +10,8 @@
   const status = document.getElementById('action-status');
   const bindings = [];
   const colorBindings = [];
+  const isSettingsWindow = window.GridSettingsWindow === true;
+  document.documentElement.classList.toggle('settings-window', isSettingsWindow);
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -31,6 +33,7 @@
   let pressAnimation;
 
   function pressFeedback() {
+    if (isSettingsWindow) return;
     pressAnimation?.cancel();
     if (!reducedMotion.matches) {
       pressAnimation = menu.querySelector('svg').animate([
@@ -243,18 +246,40 @@
     setText(status, 'All settings reset to defaults.');
   });
 
+  function canOpenSettingsWindow() {
+    return !isSettingsWindow && api.hostManaged && Boolean(window.chrome?.webview);
+  }
+
   function render() {
     const config = api.getConfig();
     bindings.forEach(sync => sync(config));
-    const message = api.hostManaged
-      ? 'For settings that survive a restart, use Lively > Customize wallpaper. Changes here are a preview.'
-      : api.storageAvailable
-        ? 'Settings save in this browser on this device.'
-        : 'Browser storage is unavailable. Settings last until this page closes.';
-    setText(document.getElementById('save-status'), message);
+    if (!isSettingsWindow) {
+      const message = api.hostManaged
+        ? 'For settings that survive a restart, use Lively > Customize wallpaper. Changes here are a preview.'
+        : api.storageAvailable
+          ? 'Settings save in this browser on this device.'
+          : 'Browser storage is unavailable. Settings last until this page closes.';
+      setText(document.getElementById('save-status'), message);
+      if (canOpenSettingsWindow() && !panel.hidden) closePanel(false);
+    }
+    syncMenuAction();
     if (layoutHostManaged !== api.hostManaged) {
       layoutHostManaged = api.hostManaged;
       refreshLayout();
+    }
+  }
+
+  function syncMenuAction() {
+    if (canOpenSettingsWindow()) {
+      menu.setAttribute('aria-label', 'Open grid settings');
+      menu.title = 'Settings · drag to move';
+      menu.removeAttribute('aria-expanded');
+      menu.removeAttribute('aria-controls');
+    } else {
+      menu.setAttribute('aria-label', panel.hidden ? 'Open grid settings' : 'Close grid settings');
+      menu.title = 'Settings · drag to move';
+      menu.setAttribute('aria-expanded', String(!panel.hidden));
+      menu.setAttribute('aria-controls', panel.id);
     }
   }
 
@@ -307,6 +332,7 @@
   }
 
   function placePanel() {
+    if (isSettingsWindow) return;
     const button = menu.getBoundingClientRect();
     const bounds = availableBounds();
     const leftSide = button.left + button.width / 2 < (bounds.left + bounds.right) / 2;
@@ -321,12 +347,15 @@
   }
 
   function closePanel(restoreFocus = true) {
+    if (isSettingsWindow) {
+      window.GridSettingsHost.close();
+      return;
+    }
     if (panel.hidden) return;
     if (restoreFocus || panel.contains(document.activeElement)) menu.focus();
     panel.hidden = true;
     panel.inert = true;
-    menu.setAttribute('aria-expanded', 'false');
-    menu.setAttribute('aria-label', 'Open grid settings');
+    syncMenuAction();
     pressFeedback();
   }
 
@@ -336,8 +365,7 @@
     placePanel();
     panel.hidden = false;
     panel.inert = false;
-    menu.setAttribute('aria-expanded', 'true');
-    menu.setAttribute('aria-label', 'Close grid settings');
+    syncMenuAction();
     pressFeedback();
     closeButton.focus();
   }
@@ -349,7 +377,10 @@
       return;
     }
     suppressClick = false;
-    if (panel.hidden) openPanel();
+    if (canOpenSettingsWindow()) {
+      pressFeedback();
+      window.open(api.hostSettings.settingsUri, '_blank');
+    } else if (panel.hidden) openPanel();
     else closePanel();
   });
   closeButton.addEventListener('click', () => closePanel());
@@ -360,7 +391,13 @@
     }
   });
   document.addEventListener('pointerdown', event => {
-    if (!panel.hidden && !panel.contains(event.target) && !menu.contains(event.target)) closePanel(false);
+    if (!isSettingsWindow && !panel.hidden && !panel.contains(event.target) && !menu.contains(event.target)) closePanel(false);
+  });
+  panel.querySelector('.panel-header').addEventListener('pointerdown', event => {
+    if (!isSettingsWindow || !event.isPrimary || event.button !== 0
+      || event.target.closest('button, a, input, select, textarea, [role="button"]')) return;
+    event.preventDefault();
+    window.GridSettingsHost.drag();
   });
 
   function syncExpandButton() {
@@ -417,6 +454,7 @@
   menu.addEventListener('pointercancel', finishDrag);
   menu.addEventListener('lostpointercapture', finishDrag);
   function refreshLayout() {
+    if (isSettingsWindow) return;
     const bounds = menu.getBoundingClientRect();
     moveMenu(bounds.left, bounds.top);
     if (!panel.hidden) placePanel();
@@ -429,5 +467,6 @@
 
   api.subscribe(render);
   render();
-  refreshLayout();
+  if (isSettingsWindow) openPanel();
+  else refreshLayout();
 })();

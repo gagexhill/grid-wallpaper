@@ -7,11 +7,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check grid-config.js && node --check grid-wallpaper.js && node --check grid-settings.js && node scripts/lively-properties.cjs --check && node --test tests/runtime.test.cjs",
+    "check": "node --check grid-config.js && node --check grid-wallpaper.js && node --check grid-native-settings.js && node --check grid-settings.js && node scripts/lively-properties.cjs --check && node --test tests/runtime.test.cjs",
     "test:browser": "playwright test",
     "test:install": "set PSModulePath=&& powershell.exe -NoProfile -File tests/install.test.ps1",
     "generate": "node scripts/lively-properties.cjs",
     "thumbnail": "node scripts/thumbnail.cjs",
+    "build:settings": "set PSModulePath=&& powershell.exe -NoProfile -File scripts/build-settings.ps1",
     "package": "set PSModulePath=&& powershell.exe -NoProfile -File scripts/package.ps1"
   },
   "devDependencies": {

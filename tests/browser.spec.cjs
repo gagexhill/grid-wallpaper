@@ -1,6 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
+const nativeProperties = require('../LivelyProperties.json');
 const url = pathToFileURL(path.resolve(__dirname, '../grid-wallpaper.html')).href;
 
 test.beforeEach(async ({ page }) => {
@@ -158,4 +159,73 @@ test('settings opening and closing have press feedback without shrinking the hit
   await menu.click(); await page.keyboard.press('Escape');
   expect(await page.evaluate(() => window.pressRecords.length)).toBe(4);
   expect(await menu.locator('svg').evaluate(icon => icon.getAnimations().length)).toBe(0);
+});
+
+test('Lively WebView2 opens the custom panel link while other hosts keep the inline panel', async ({ page }) => {
+  await page.evaluate(() => {
+    window.chrome.webview = {};
+    window.openedSettings = [];
+    window.open = (...args) => window.openedSettings.push(args);
+    livelyPropertyListener('count', 5);
+  });
+  await page.locator('#hamburger').click();
+  expect(await page.evaluate(() => window.openedSettings)).toEqual([['grid-wallpaper-settings:', '_blank']]);
+  await expect(page.locator('#panel')).toBeHidden();
+  await page.evaluate(() => { delete window.chrome.webview; });
+  await page.locator('#hamburger').click();
+  await expect(page.locator('#panel')).toBeVisible();
+});
+
+test('custom host preserves the panel and confirms only saved revisions', async ({ page }, info) => {
+  await page.setViewportSize({ width: 360, height: 700 });
+  await page.addInitScript(() => {
+    window.GridSettingsWindow = true;
+    window.hostMessages = [];
+    window.animationRequests = 0;
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = callback => { window.animationRequests++; return raf(callback); };
+    window.chrome.webview = {
+      postMessage: message => window.hostMessages.push(message),
+      addEventListener: (kind, listener) => { if (kind === 'message') window.receiveHostMessage = listener; }
+    };
+  });
+  await page.reload();
+  await expect(page.locator('#panel')).toBeVisible();
+  await expect(page.locator('#hamburger')).toBeHidden();
+  await expect(page.locator('#setting-count')).toBeDisabled();
+  expect(await page.evaluate(() => window.hostMessages)).toEqual([{ kind: 'ready' }]);
+  expect(await page.evaluate(() => window.animationRequests)).toBe(0);
+  await page.evaluate(properties => window.receiveHostMessage({ data: { kind: 'init', properties } }), nativeProperties);
+  await expect(page.locator('#setting-count')).toBeEnabled();
+  await expect(page.locator('#save-status')).toHaveText('Changes save automatically.');
+  await page.getByRole('button', { name: 'Expand all sections' }).click();
+  await expect(page.locator('.preset')).toHaveCount(8);
+  await page.getByRole('button', { name: 'Dusk', exact: true }).click();
+  const change = await page.evaluate(() => window.hostMessages.at(-1));
+  expect(change.kind).toBe('change');
+  expect(change.properties.bgColor).toBe('#2a1f1f');
+  expect(Number.isSafeInteger(change.revision)).toBe(true);
+  await expect(page.locator('#save-status')).toHaveText('Saving changes…');
+  await page.evaluate(revision => window.receiveHostMessage({ data: { kind: 'saved', revision: revision - 1 } }), change.revision);
+  await expect(page.locator('#save-status')).toHaveText('Saving changes…');
+  await page.evaluate(revision => window.receiveHostMessage({ data: { kind: 'saved', revision } }), change.revision);
+  await expect(page.locator('#save-status')).toHaveText('Changes saved.');
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'error', message: 'A test save failed.' } }));
+  await page.evaluate(() => GridWallpaper.update({ count: 2 }));
+  const retry = await page.evaluate(() => window.hostMessages.at(-1));
+  expect(retry.properties.count).toBe(2);
+  expect(retry.properties.bgColor).toBe('#2a1f1f');
+  const panel = await page.locator('#panel').boundingBox();
+  expect(panel).toEqual({ x: 0, y: 0, width: 360, height: 700 });
+  await page.locator('#panel').evaluate(node => { node.scrollTop = 0; });
+  await page.screenshot({ path: info.outputPath('custom-settings-panel.png') });
+  await page.locator('.panel-header').dispatchEvent('pointerdown', { isPrimary: true, button: 0 });
+  expect(await page.evaluate(() => window.hostMessages.at(-1))).toEqual({ kind: 'drag' });
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => window.hostMessages.at(-1))).toEqual({ kind: 'close' });
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'closing' } }));
+  await expect(page.locator('#setting-count')).toBeDisabled();
+  await expect(page.locator('#save-status')).toHaveText('Saving before closing…');
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'error', message: 'Could not save before closing.' } }));
+  await expect(page.locator('#setting-count')).toBeEnabled();
 });

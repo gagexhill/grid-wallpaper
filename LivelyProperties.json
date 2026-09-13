@@ -1,7 +1,7 @@
 {
   "instructions": {
     "type": "label",
-    "value": "These controls are saved by Lively. The on-wallpaper settings panel is a temporary preview."
+    "value": "Changes to these controls are saved automatically by Lively."
   },
   "count": {
     "type": "slider",

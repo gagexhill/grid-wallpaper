@@ -9,6 +9,8 @@ startup preferences, other library items, and per-display customization are pres
 Checks the package and describes the installation without changing files or apps.
 .PARAMETER SkipLaunch
 Installs the package without starting Lively or changing the active wallpaper.
+.PARAMETER RemoveSettingsLink
+Removes the per-user settings link without deleting wallpapers or Lively.
 .PARAMETER ReadyTimeoutSeconds
 Maximum time to wait for Lively startup or its first-run setup before reporting
 the remaining setup step. Complete that setup and rerun this command to continue.
@@ -17,6 +19,7 @@ the remaining setup step. Complete that setup and rerun this command to continue
 param(
     [switch]$Preview,
     [switch]$SkipLaunch,
+    [switch]$RemoveSettingsLink,
     [ValidateRange(5, 60)]
     [int]$ReadyTimeoutSeconds = 30
 )
@@ -26,10 +29,76 @@ Set-StrictMode -Version 2.0
 
 $runtimeFiles = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'wallpaper-files.json') -Raw | ConvertFrom-Json
 foreach ($file in $runtimeFiles) {
-    if ($file -notmatch '^[A-Za-z0-9-]+\.(html|css|js|json|jpg|gif)$') { throw 'Invalid runtime filename in wallpaper-files.json.' }
+    if ($file -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.(html|css|js|json|jpg|gif|exe|dll|txt)$') { throw 'Invalid runtime filename in wallpaper-files.json.' }
 }
 $packageId = 'rocksdanister.LivelyWallpaper'
 $normalDataDirectory = Join-Path $env:LOCALAPPDATA 'Lively Wallpaper'
+$integration = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows-integration.json') -Raw | ConvertFrom-Json
+if ($integration.settingsUri -notmatch '^[a-z][a-z0-9-]{2,50}:$') { throw 'Invalid settings link metadata.' }
+$settingsKey = 'HKCU:\Software\Classes\' + $integration.settingsUri.TrimEnd(':')
+
+function Get-RuntimeSource($File) {
+    $sourcePath = Join-Path $PSScriptRoot $File
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+        $sourcePath = Join-Path (Join-Path $PSScriptRoot 'dist\settings-host') $File
+    }
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "The package is incomplete: $File is missing. Extract the complete ZIP, or build the settings host when developing from source." }
+    if ((Get-Item -LiteralPath $sourcePath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Runtime sources must be regular files: $File" }
+    return $sourcePath
+}
+
+function Assert-SettingsLink {
+    if (Test-Path -LiteralPath $settingsKey) {
+        if ((Get-Item -LiteralPath $settingsKey).GetValue('GridWallpaperManaged', 0) -ne 1) { throw 'The settings link is owned by another application. Nothing was overwritten.' }
+    } elseif (Test-Path -LiteralPath ('Registry::HKEY_CLASSES_ROOT\' + $integration.settingsUri.TrimEnd(':'))) {
+        throw 'The settings link is already registered by another application. Nothing was overwritten.'
+    }
+}
+
+function Register-SettingsLink($Destination) {
+    Assert-SettingsLink
+    $executable = Join-Path $Destination 'grid-settings.exe'
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw 'The settings host is missing. Extract the complete package and rerun setup.' }
+    $commandKey = Join-Path $settingsKey 'shell\open\command'
+    $null = New-Item -Path $commandKey -Force
+    $null = New-ItemProperty -LiteralPath $settingsKey -Name '(default)' -Value 'URL:Grid Wallpaper Settings' -PropertyType String -Force
+    $null = New-ItemProperty -LiteralPath $settingsKey -Name 'URL Protocol' -Value '' -PropertyType String -Force
+    $null = New-ItemProperty -LiteralPath $settingsKey -Name 'GridWallpaperManaged' -Value 1 -PropertyType DWord -Force
+    $command = '"' + $executable + '"'
+    $null = New-ItemProperty -LiteralPath $commandKey -Name '(default)' -Value $command -PropertyType String -Force
+    if ((Get-Item -LiteralPath $commandKey).GetValue('') -cne $command) { throw 'Settings link verification failed.' }
+}
+
+function Remove-SettingsLink {
+    if (-not (Test-Path -LiteralPath $settingsKey)) { return }
+    Assert-SettingsLink
+    if ((Get-Item -LiteralPath $settingsKey).Name -cne $settingsKey.Replace('HKCU:', 'HKEY_CURRENT_USER')) { throw 'Refusing to remove a registration outside the exact owned key.' }
+    Remove-Item -LiteralPath $settingsKey -Recurse -Force
+}
+
+function Assert-HostConfig($Destination) {
+    $configPath = Join-Path $Destination 'windows-host.json'
+    if (Test-Path -LiteralPath $configPath) {
+        $existing = Get-Item -LiteralPath $configPath
+        if ($existing.PSIsContainer -or ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'The installed settings configuration must be a regular file.' }
+    }
+}
+
+function Write-HostConfig($Destination, $Lively) {
+    Assert-HostConfig $Destination
+    $configPath = Join-Path $Destination 'windows-host.json'
+    $config = @{ LivelyExecutable = $Lively.Executable; LivelyDataDirectory = $Lively.DataDirectory; WallpaperDirectory = $Destination }
+    [IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json))
+}
+
+function Close-SettingsHost($Destination) {
+    $executable = Join-Path $Destination 'grid-settings.exe'
+    $running = @(Get-Process -Name 'grid-settings' -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $executable })
+    if (-not $running.Count) { return }
+    $command = Start-Process -FilePath $executable -ArgumentList '--close' -WindowStyle Hidden -PassThru
+    if (-not $command.WaitForExit(18000) -or $command.ExitCode -ne 0) { throw 'Close Grid settings, allow pending changes to save, and rerun setup. No settings process was force-stopped.' }
+    if (@($running | Where-Object { -not $_.HasExited }).Count) { throw 'Grid settings is still closing. Rerun setup after its window closes.' }
+}
 
 function Find-Lively {
     $candidates = @()
@@ -145,7 +214,7 @@ function Copy-Runtime($Destination) {
     }
     $null = New-Item -ItemType Directory -Path $Destination -Force
     foreach ($file in $runtimeFiles) {
-        $sourcePath = Join-Path $PSScriptRoot $file
+        $sourcePath = Get-RuntimeSource $file
         $targetPath = Join-Path $Destination $file
         if ([IO.Path]::GetFullPath($sourcePath) -ieq [IO.Path]::GetFullPath($targetPath)) { continue }
         Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
@@ -162,6 +231,12 @@ function Test-LivelyRunning($Executable) {
     return $false
 }
 
+function Get-LivelyUiPath($Lively) {
+    $coreDirectory = Split-Path $Lively.Executable -Parent
+    if ($Lively.Store) { return Join-Path (Split-Path $coreDirectory -Parent) 'Lively.UI.WinUI.exe' }
+    return Join-Path $coreDirectory 'Plugins\UI\Lively.UI.WinUI.exe'
+}
+
 function Invoke-LivelyCommand([string]$Arguments) {
     $command = Start-Process -FilePath $lively.Executable -ArgumentList $Arguments -WindowStyle Hidden -PassThru
     if (-not $command.WaitForExit(10000)) {
@@ -172,10 +247,15 @@ function Invoke-LivelyCommand([string]$Arguments) {
 
 try {
     if ($env:OS -ne 'Windows_NT') { throw 'Desktop installation requires Windows. Open grid-wallpaper.html in a browser to preview on other systems.' }
+    if ($RemoveSettingsLink) {
+        Assert-SettingsLink
+        if ($Preview) { Write-Output 'Would remove only the per-user Grid Wallpaper settings link.' }
+        else { Remove-SettingsLink; Write-Output 'Removed the settings link. Wallpapers and Lively were left in place.' }
+        return
+    }
+    Assert-SettingsLink
     foreach ($file in $runtimeFiles) {
-        if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $file) -PathType Leaf)) {
-            throw "The package is incomplete: $file is missing. Extract the complete release ZIP before running setup."
-        }
+        $null = Get-RuntimeSource $file
     }
     $metadata = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LivelyInfo.json') -Raw | ConvertFrom-Json
     $null = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LivelyProperties.json') -Raw | ConvertFrom-Json
@@ -183,10 +263,12 @@ try {
     $state = Get-LivelyState $lively -AllowInitializing
     if ($Preview) {
         Write-Output 'Preview only: no files, applications, wallpaper, or settings were changed.'
+        Write-Output 'Would register a per-user link to the fixed Grid settings command.'
         if ($lively) { Write-Output ('Lively: ' + $lively.Executable) }
         else { Write-Output ('Would install with WinGet: ' + $packageId + ' (official stable package).') }
         if ($state.SettingsReady) {
             Assert-Destination $state.Destination $metadata
+            Assert-HostConfig $state.Destination
             Write-Output ('Would copy ' + $runtimeFiles.Count + ' runtime files to: ' + $state.Destination)
             if (-not $SkipLaunch) { Write-Output ('Would open Lively and submit: setwp --file "' + $state.CommandDirectory + '"') }
         } else {
@@ -213,7 +295,11 @@ try {
             exit 2
         }
         Assert-Destination $state.Destination $metadata
+        Assert-HostConfig $state.Destination
+        Close-SettingsHost $state.Destination
         Copy-Runtime $state.Destination
+        Write-HostConfig $state.Destination $lively
+        Register-SettingsLink $state.Destination
         Write-Output ('Grid Wallpaper files installed and verified: ' + $state.Destination)
         Write-Output 'Launch skipped. Rerun without -SkipLaunch to open the wallpaper. Lively owns customization and removal through its library.'
         return
@@ -233,6 +319,7 @@ try {
         }
     }
     Assert-Destination $state.Destination $metadata
+    Assert-HostConfig $state.Destination
     $refreshLibrary = $false
     foreach ($file in @('LivelyInfo.json', $metadata.Thumbnail, $metadata.Preview)) {
         if (-not $file) { continue }
@@ -242,13 +329,16 @@ try {
             $refreshLibrary = $true
         }
     }
+    Close-SettingsHost $state.Destination
     Copy-Runtime $state.Destination
+    Write-HostConfig $state.Destination $lively
+    Register-SettingsLink $state.Destination
     Write-Output ('Grid Wallpaper files installed and verified: ' + $state.Destination)
     $arguments = 'setwp --file "' + $state.CommandDirectory + '"'
     Invoke-LivelyCommand $arguments
     if ($refreshLibrary) {
         Write-Output 'Refreshing the Lively library window to show the wallpaper thumbnail and description.'
-        $uiPath = Join-Path (Split-Path $lively.Executable -Parent) 'Plugins\UI\Lively.UI.WinUI.exe'
+        $uiPath = Get-LivelyUiPath $lively
         $oldUi = @(Get-Process -Name 'Lively.UI.WinUI' -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $uiPath })
         Invoke-LivelyCommand 'app --showApp false'
         $deadline = [DateTime]::UtcNow.AddSeconds(8)
@@ -263,7 +353,7 @@ try {
         }
     }
     Write-Output 'Submitted Grid Wallpaper to Lively. Confirm the animated grid on your desktop; this command alone cannot verify rendering.'
-    Write-Output 'Use Lively Library > Grid Wallpaper > Customize for settings that survive restart. Startup, battery pause, displays, and removal are managed in Lively.'
+    Write-Output 'Open the grid settings button for your custom panel. Changes save through Lively. Startup, battery pause, displays, and removal are managed in Lively.'
 } catch {
     Write-Error -Message $_.Exception.Message -ErrorAction Continue
     exit 1

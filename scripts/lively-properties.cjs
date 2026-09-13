@@ -1,10 +1,10 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaults, schema, fpsOptions, mouseModes } = require('../grid-config.js');
+const { defaults, schema, fpsOptions, mouseModes, hostSettings } = require('../grid-config.js');
 // Lively requires this native JSON; generate it from the browser's canonical configuration.
 const properties = {
-  instructions: { type: 'label', value: 'These controls are saved by Lively. The on-wallpaper settings panel is a temporary preview.' }
+  instructions: { type: 'label', value: 'Changes to these controls are saved automatically by Lively.' }
 };
 const labels = {
   bgColor: 'Background color', lineColor: 'Grid line color', autoColor: 'Automatic line color',
@@ -23,10 +23,12 @@ for (const [key, value] of Object.entries(defaults)) {
   else if (key === 'mouseMode') properties[key] = { type: 'dropdown', text: 'Mouse interaction', items: mouseModes, value: mouseModes.indexOf(value) };
   else properties[key] = { type: typeof value === 'boolean' ? 'checkbox' : 'color', text: labels[key], value };
 }
-const target = path.join(__dirname, '..', 'LivelyProperties.json');
-const output = JSON.stringify(properties, null, 2) + '\n';
-if (process.argv.includes('--check')) {
-  if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n') !== output) {
-    console.error('LivelyProperties.json is out of date. Run npm run generate.'); process.exitCode = 1;
-  }
-} else fs.writeFileSync(target, output);
+for (const [name, value] of Object.entries({ 'LivelyProperties.json': properties, 'windows-integration.json': hostSettings })) {
+  const target = path.join(__dirname, '..', name);
+  const output = JSON.stringify(value, null, 2) + '\n';
+  if (process.argv.includes('--check')) {
+    if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n') !== output) {
+      console.error(`${name} is out of date. Run npm run generate.`); process.exitCode = 1;
+    }
+  } else fs.writeFileSync(target, output);
+}
