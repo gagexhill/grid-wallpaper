@@ -1,4 +1,4 @@
-// A temporary native window for the repository's existing HTML settings panel.
+// A reusable native window for the repository's existing HTML settings panel.
 // Lively remains the owner of persisted wallpaper properties.
 using System;
 using System.Collections;
@@ -24,84 +24,135 @@ internal static class SettingsProgram
 {
     private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
     private const string WindowMarker = "GridWallpaperSettingsWindow";
+    internal const int OpenMessage = 0x8001;
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern IntPtr GetProp(IntPtr window, string name);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern bool SetProp(IntPtr window, string name, IntPtr value);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] private static extern IntPtr RemoveProp(IntPtr window, string name);
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(IntPtr window);
-    [DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr window, int command);
-    [DllImport("user32.dll")] internal static extern bool ReleaseCapture();
-    [DllImport("user32.dll")] internal static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(int processId);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out WindowRectangle rectangle);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowRectangle { internal int Left, Top, Right, Bottom; }
+    private static readonly int CurrentProcessId = Process.GetCurrentProcess().Id;
 
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length == 1 && args[0] == "--self-test") return SettingsData.SelfTest();
+        SetProcessDPIAware();
+        if (args.Length == 1 && args[0] == "--self-test")
+        {
+            int result = SettingsData.SelfTest();
+            return result == 0 ? SettingsGeometry.SelfTest() : result;
+        }
         string executable = Path.GetFullPath(Application.ExecutablePath);
-        if (args.Length == 1 && args[0] == "--close") return CloseExisting(executable);
-        if (args.Length != 0) return 2;
+        string installDirectory = Path.GetDirectoryName(executable);
         string id;
         using (SHA256 hash = SHA256.Create())
             id = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(executable.ToUpperInvariant()))).Replace("-", "");
+        string shutdownName = "Local\\GridWallpaperSettingsShutdown-" + id;
+        if (args.Length == 1 && args[0] == "--close") return CloseExisting(executable, shutdownName);
+        if (args.Length == 1 && args[0] == "--status") return PrintStatus(executable);
+        bool warm = args.Length == 1 && args[0] == "--warm";
+        Point anchor = SettingsGeometry.DefaultAnchor;
+        if (!warm)
+        {
+            if (args.Length != 2 || args[0] != "--uri") return 2;
+            try
+            {
+                Dictionary<string, object> integration = SettingsData.ObjectValue(SettingsData.ReadJson(Path.Combine(installDirectory, "windows-integration.json")));
+                object scheme;
+                if (!integration.TryGetValue("settingsUri", out scheme) || !(scheme is string)
+                    || !SettingsGeometry.TryParseUri((string)scheme, args[1], out anchor)) return 2;
+            }
+            catch (Exception) { return 2; }
+        }
         bool created;
         using (Mutex singleton = new Mutex(true, "Local\\GridWallpaperSettings-" + id, out created))
         {
-            if (!created)
+            if (!created) return warm ? 0 : OpenExisting(executable, anchor);
+            using (EventWaitHandle shutdown = new EventWaitHandle(false, EventResetMode.ManualReset, shutdownName))
             {
-                for (int attempt = 0; attempt < 20; attempt++)
+                try
                 {
-                    foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executable)))
-                    {
-                        using (process)
-                        {
-                            try
-                            {
-                                if (process.Id != CurrentProcessId && SettingsData.SamePath(process.MainModule.FileName, executable))
-                                {
-                                    IntPtr window = FindSettingsWindow(process.Id);
-                                    if (window != IntPtr.Zero)
-                                    {
-                                        ShowWindow(window, 9);
-                                        SetForegroundWindow(window);
-                                        return 0;
-                                    }
-                                }
-                            }
-                            catch (System.ComponentModel.Win32Exception) { }
-                            catch (InvalidOperationException) { }
-                        }
-                    }
-                    Thread.Sleep(100);
+                    Application.EnableVisualStyles();
+                    Application.SetCompatibleTextRenderingDefault(false);
+                    Application.Run(new SettingsWindow(installDirectory, warm, anchor, shutdown));
+                    return 0;
                 }
-                return 0;
+                catch (Exception error)
+                {
+                    if (!warm)
+                    {
+                        string message = error is SettingsFailure ? error.Message
+                            : "The settings window could not start. Rerun Grid Wallpaper setup and check that Microsoft Edge WebView2 Runtime is installed.";
+                        MessageBox.Show(message, "Grid Wallpaper Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    return 1;
+                }
+                finally { singleton.ReleaseMutex(); }
             }
-            try
-            {
-                SetProcessDPIAware();
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                SettingsData data = SettingsData.Load(Path.GetDirectoryName(executable));
-                Application.Run(new SettingsWindow(data));
-                return 0;
-            }
-            catch (Exception error)
-            {
-                string message = error is SettingsFailure ? error.Message
-                    : "The settings window could not start. Rerun Grid Wallpaper setup and check that Microsoft Edge WebView2 Runtime is installed.";
-                MessageBox.Show(message, "Grid Wallpaper Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return 1;
-            }
-            finally { singleton.ReleaseMutex(); }
         }
     }
 
-    private static readonly int CurrentProcessId = Process.GetCurrentProcess().Id;
-
     internal static void MarkWindow(IntPtr window) { SetProp(window, WindowMarker, new IntPtr(1)); }
-    internal static void UnmarkWindow(IntPtr window) { RemoveProp(window, WindowMarker); }
+    internal static void UnmarkWindow(IntPtr window)
+    {
+        foreach (string suffix in new string[] { "", "Ready", "Suspended", "Radius", "Region" }) RemoveProp(window, WindowMarker + suffix);
+    }
+
+    internal static void SetWindowState(IntPtr window, bool ready, bool suspended, double radius, bool region)
+    {
+        SetProp(window, WindowMarker + "Ready", new IntPtr(ready ? 1 : 0));
+        SetProp(window, WindowMarker + "Suspended", new IntPtr(suspended ? 1 : 0));
+        SetProp(window, WindowMarker + "Radius", new IntPtr((int)Math.Round(radius * 1000)));
+        SetProp(window, WindowMarker + "Region", new IntPtr(region ? 1 : 0));
+    }
+
+    private static int PrintStatus(string executable)
+    {
+        bool running = false;
+        IntPtr window = IntPtr.Zero;
+        foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executable)))
+        {
+            using (process)
+            {
+                try
+                {
+                    if (process.Id == CurrentProcessId || !SettingsData.SamePath(process.MainModule.FileName, executable) || process.HasExited) continue;
+                    running = true;
+                    window = FindSettingsWindow(process.Id);
+                    if (window != IntPtr.Zero) break;
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (InvalidOperationException) { }
+            }
+        }
+        WindowRectangle bounds = new WindowRectangle();
+        if (window != IntPtr.Zero) GetWindowRect(window, out bounds);
+        Rectangle primaryBounds = Screen.PrimaryScreen.Bounds;
+        Rectangle primaryWorkArea = Screen.PrimaryScreen.WorkingArea;
+        Console.WriteLine(new JavaScriptSerializer().Serialize(new
+        {
+            running = running,
+            ready = window != IntPtr.Zero && GetProp(window, WindowMarker + "Ready") == new IntPtr(1),
+            visible = window != IntPtr.Zero && IsWindowVisible(window),
+            suspended = window != IntPtr.Zero && GetProp(window, WindowMarker + "Suspended") == new IntPtr(1),
+            left = bounds.Left, top = bounds.Top, width = bounds.Right - bounds.Left, height = bounds.Bottom - bounds.Top,
+            region = window != IntPtr.Zero && GetProp(window, WindowMarker + "Region") == new IntPtr(1),
+            radius = window == IntPtr.Zero ? 0d : GetProp(window, WindowMarker + "Radius").ToInt64() / 1000d,
+            screen = new
+            {
+                left = primaryBounds.Left, top = primaryBounds.Top, width = primaryBounds.Width, height = primaryBounds.Height,
+                workArea = new { left = primaryWorkArea.Left, top = primaryWorkArea.Top, width = primaryWorkArea.Width, height = primaryWorkArea.Height }
+            }
+        }));
+        return 0;
+    }
 
     private static IntPtr FindSettingsWindow(int processId)
     {
@@ -117,8 +168,38 @@ internal static class SettingsProgram
         return result;
     }
 
-    private static int CloseExisting(string executable)
+    private static int OpenExisting(string executable, Point anchor)
     {
+        // The hidden HWND is created before WebView2 or Lively startup is awaited.
+        for (int attempt = 0; attempt < 30; attempt++)
+        {
+            foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executable)))
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (process.Id == CurrentProcessId || !SettingsData.SamePath(process.MainModule.FileName, executable)) continue;
+                        IntPtr window = FindSettingsWindow(process.Id);
+                        if (window != IntPtr.Zero)
+                        {
+                            AllowSetForegroundWindow(process.Id);
+                            return PostMessage(window, OpenMessage, new IntPtr(anchor.X), new IntPtr(anchor.Y)) ? 0 : 2;
+                        }
+                    }
+                    catch (System.ComponentModel.Win32Exception) { }
+                    catch (InvalidOperationException) { }
+                }
+            }
+            Thread.Sleep(100);
+        }
+        return 2;
+    }
+
+    private static int CloseExisting(string executable, string shutdownName)
+    {
+        try { using (EventWaitHandle shutdown = EventWaitHandle.OpenExisting(shutdownName)) shutdown.Set(); }
+        catch (WaitHandleCannotBeOpenedException) { }
         Stopwatch elapsed = Stopwatch.StartNew();
         HashSet<int> notified = new HashSet<int>();
         do
@@ -135,6 +216,7 @@ internal static class SettingsProgram
                         IntPtr window = FindSettingsWindow(process.Id);
                         if (window != IntPtr.Zero && !notified.Contains(process.Id))
                         {
+                            // Also supports shutting down the previous non-warm helper version.
                             if (PostMessage(window, 0x10, IntPtr.Zero, IntPtr.Zero)) notified.Add(process.Id);
                         }
                     }
@@ -146,6 +228,60 @@ internal static class SettingsProgram
             Thread.Sleep(100);
         } while (elapsed.ElapsedMilliseconds < 15000);
         return 2;
+    }
+}
+
+internal static class SettingsGeometry
+{
+    internal const int CoordinateScale = 1000000;
+    internal static readonly Point DefaultAnchor = new Point(980000, 40000);
+
+    internal static bool TryParseUri(string scheme, string value, out Point anchor)
+    {
+        anchor = DefaultAnchor;
+        if (scheme == null || !Regex.IsMatch(scheme, @"^[a-z][a-z0-9-]{1,63}:\z")
+            || value == null || value.Length > 256 || !value.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)) return false;
+        string action = value.Substring(scheme.Length);
+        if (action.Length == 0) return true;
+        Match match = Regex.Match(action, @"^open\?x=([01](?:\.[0-9]{1,20})?)&y=([01](?:\.[0-9]{1,20})?)\z");
+        if (!match.Success) return false;
+        double x, y;
+        if (!Double.TryParse(match.Groups[1].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out x)
+            || !Double.TryParse(match.Groups[2].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out y)
+            || x < 0 || x > 1 || y < 0 || y > 1 || Double.IsNaN(x) || Double.IsNaN(y)) return false;
+        anchor = new Point((int)Math.Round(x * CoordinateScale), (int)Math.Round(y * CoordinateScale));
+        return true;
+    }
+
+    internal static Point Position(Rectangle screen, Rectangle workArea, Size panel, Point anchor, int gap)
+    {
+        if (anchor.X < 0 || anchor.X > CoordinateScale || anchor.Y < 0 || anchor.Y > CoordinateScale)
+            throw new SettingsFailure("The settings panel position is invalid.");
+        int x = screen.Left + (int)Math.Round(screen.Width * (double)anchor.X / CoordinateScale) - panel.Width;
+        int y = screen.Top + (int)Math.Round(screen.Height * (double)anchor.Y / CoordinateScale);
+        return new Point(Math.Max(workArea.Left + gap, Math.Min(x, workArea.Right - panel.Width - gap)),
+            Math.Max(workArea.Top + gap, Math.Min(y, workArea.Bottom - panel.Height - gap)));
+    }
+
+    internal static int SelfTest()
+    {
+        Point anchor;
+        const string scheme = "grid-wallpaper-settings:";
+        if (!TryParseUri(scheme, scheme + "open?x=0.95&y=0.1", out anchor) || anchor != new Point(950000, 100000)) return 20;
+        if (!TryParseUri(scheme, scheme, out anchor) || anchor != DefaultAnchor) return 21;
+        foreach (string invalid in new string[] { "open?x=-0.1&y=0", "open?x=1.1&y=0", "open?x=NaN&y=0", "open?x=Infinity&y=0",
+            "open?x=0&y=0&command=quit", "open?x=0&x=0", "open?y=0&x=0", "open?x=0&y=0#fragment", "//open?x=0&y=0",
+            "open?x=0%22&y=0", "open?x=0&y=0 --close", "close", "open?x=0&y=0\n", "open?x=.5&y=0" })
+            if (TryParseUri(scheme, scheme + invalid, out anchor)) return 22;
+        if (TryParseUri(scheme, "https://example.com/open?x=0&y=0", out anchor)) return 23;
+        Rectangle screen = new Rectangle(0, 0, 1920, 1200);
+        Rectangle area = new Rectangle(0, 0, 1920, 1140);
+        Size panel = new Size(450, 875);
+        if (Position(screen, area, panel, new Point(950000, 100000), 20) != new Point(1374, 120)) return 24;
+        if (Position(screen, area, panel, new Point(0, 0), 20) != new Point(20, 20)) return 25;
+        if (Position(screen, area, panel, new Point(CoordinateScale, CoordinateScale), 20) != new Point(1450, 245)) return 26;
+        try { Position(screen, area, panel, new Point(-1, 0), 20); return 27; } catch (SettingsFailure) { }
+        return 0;
     }
 }
 
@@ -161,6 +297,7 @@ internal sealed class SettingsData
     internal string LivelyDataDirectory;
     internal string PropertyPath;
     internal int DisplayIndex;
+    internal int LivelyProcessId;
     internal Dictionary<string, object> Properties;
     private CultureInfo nativeCulture = CultureInfo.InvariantCulture;
 
@@ -233,10 +370,28 @@ internal sealed class SettingsData
             || !String.Equals(Path.GetFileName(data.LivelyExecutable), "Lively.exe", StringComparison.OrdinalIgnoreCase)
             || (new DirectoryInfo(installDirectory).Attributes & FileAttributes.ReparsePoint) != 0)
             throw new SettingsFailure("Run the installed Grid Wallpaper settings window. Rerun setup if it was moved.");
-        data.Properties = ObjectValue(ReadJson(Path.Combine(installDirectory, "LivelyProperties.json")));
-        data.VerifyPrimary();
-        Dictionary<string, object> saved = ObjectValue(ReadJson(data.PropertyPath));
-        foreach (KeyValuePair<string, object> item in data.Properties)
+        data.ReloadProperties();
+        return data;
+    }
+
+    internal static SettingsData WaitForStartup(string installDirectory, bool warm, WaitHandle shutdown)
+    {
+        Stopwatch elapsed = Stopwatch.StartNew();
+        while (!shutdown.WaitOne(0))
+        {
+            try { return Load(installDirectory); }
+            catch (Exception) { if (!warm || elapsed.ElapsedMilliseconds >= 60000) throw; }
+            if (shutdown.WaitOne(250)) return null;
+        }
+        return null;
+    }
+
+    internal void ReloadProperties()
+    {
+        VerifyPrimary();
+        Dictionary<string, object> definitions = ObjectValue(ReadJson(Path.Combine(WallpaperDirectory, "LivelyProperties.json")));
+        Dictionary<string, object> saved = ObjectValue(ReadJson(PropertyPath));
+        foreach (KeyValuePair<string, object> item in definitions)
         {
             Dictionary<string, object> definition = ObjectValue(item.Value);
             object savedControl, value, normalized;
@@ -245,7 +400,7 @@ internal sealed class SettingsData
                 && ObjectValue(savedControl).TryGetValue("value", out value)
                 && ValidateValue(item.Key, definition, value, out normalized, out argument)) definition["value"] = normalized;
         }
-        return data;
+        Properties = definitions;
     }
 
     // Store installations can expose logical AppData paths through native metadata.
@@ -304,20 +459,27 @@ internal sealed class SettingsData
         }
         PropertyPath = propertyPath;
         DisplayIndex = index;
-        bool running = false;
+        int runningId = 0;
+        DateTime oldest = DateTime.MaxValue;
         foreach (Process process in Process.GetProcessesByName("Lively"))
         {
             using (process)
             {
-                try { if (SamePath(process.MainModule.FileName, LivelyExecutable) && !process.HasExited) running = true; }
+                try
+                {
+                    if (SamePath(process.MainModule.FileName, LivelyExecutable) && !process.HasExited && process.StartTime < oldest)
+                    { runningId = process.Id; oldest = process.StartTime; }
+                }
                 catch (System.ComponentModel.Win32Exception) { }
                 catch (InvalidOperationException) { }
             }
         }
-        if (!running) throw new SettingsFailure("Lively is not running. Start the wallpaper and reopen settings.");
+        if (runningId == 0 || (LivelyProcessId != 0 && runningId != LivelyProcessId))
+            throw new SettingsFailure("Lively is not running or has restarted. Start the wallpaper and reopen settings.");
+        LivelyProcessId = runningId;
     }
 
-    private static bool NumberValue(object value, out double result)
+    internal static bool NumberValue(object value, out double result)
     {
         result = 0;
         if (!(value is int || value is long || value is double || value is decimal || value is float)) return false;
@@ -433,18 +595,33 @@ internal sealed class SettingsData
 
 internal sealed class SettingsWindow : Form
 {
-    private readonly SettingsData data;
+    private readonly string installDirectory, documentUri;
+    private readonly bool warmStart;
+    private readonly EventWaitHandle shutdown;
     private readonly WebView2 browser = new WebView2();
     private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
     private readonly Dictionary<string, string> pending = new Dictionary<string, string>();
-    private readonly string documentUri;
-    private bool ready, closing, permitClose, saving, browserFailed, failureNotified;
+    private readonly RegisteredWaitHandle shutdownWait;
+    private readonly double displayScale;
+    private readonly int displayGap;
+    private SettingsData data;
+    private Process livelyProcess;
+    private Point anchor;
+    private bool allowVisible, openRequested, everOpened, ready, suspended, suspending, saving, refreshing, refreshAfterSave;
+    private bool shuttingDown, shutdownClosing, permitClose, ownerExited, browserFailed, failureNotified;
+    private double cornerRadius;
     private long latestRevision;
+    private int visibilityEpoch;
+    private string saveFailure;
     private Task<bool> savingTask;
 
-    internal SettingsWindow(SettingsData settings)
+    internal SettingsWindow(string installedDirectory, bool warm, Point requestedAnchor, EventWaitHandle shutdownEvent)
     {
-        data = settings;
+        installDirectory = installedDirectory;
+        warmStart = warm;
+        openRequested = !warm;
+        anchor = requestedAnchor;
+        shutdown = shutdownEvent;
         Text = "Grid Wallpaper Settings";
         FormBorderStyle = FormBorderStyle.None;
         TopMost = false;
@@ -452,22 +629,35 @@ internal sealed class SettingsWindow : Form
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
         BackColor = Color.FromArgb(16, 16, 14);
-        double scale;
-        using (Graphics graphics = Graphics.FromHwnd(IntPtr.Zero)) scale = graphics.DpiX / 96.0;
+        using (Graphics graphics = Graphics.FromHwnd(IntPtr.Zero)) displayScale = graphics.DpiX / 96.0;
         Rectangle area = Screen.PrimaryScreen.WorkingArea;
-        int gap = (int)Math.Round(16 * scale);
-        ClientSize = new Size(Math.Min((int)Math.Round(360 * scale), area.Width - gap * 2), Math.Min((int)Math.Round(700 * scale), area.Height - gap * 2));
-        Location = new Point(area.Right - Width - gap, area.Top + gap);
+        displayGap = (int)Math.Round(16 * displayScale);
+        ClientSize = new Size(Math.Min((int)Math.Round(360 * displayScale), area.Width - displayGap * 2),
+            Math.Min((int)Math.Round(700 * displayScale), area.Height - displayGap * 2));
+        PositionPanel();
         browser.Dock = DockStyle.Fill;
         browser.DefaultBackgroundColor = BackColor;
         Controls.Add(browser);
-        documentUri = new Uri(Path.Combine(data.WallpaperDirectory, "grid-wallpaper.html")).AbsoluteUri;
+        documentUri = new Uri(Path.Combine(installDirectory, "grid-wallpaper.html")).AbsoluteUri;
         timer.Interval = 150;
-        timer.Tick += delegate { if (!saving && pending.Count > 0) savingTask = SavePending(); };
-        Shown += async delegate { await InitializeBrowser(); };
+        timer.Tick += delegate { timer.Stop(); if (!saving && pending.Count > 0) savingTask = SavePending(); };
         FormClosing += CloseSafely;
-        FormClosed += delegate { timer.Dispose(); browser.Dispose(); };
+        FormClosed += delegate
+        {
+            shutdownWait.Unregister(null);
+            timer.Dispose();
+            if (livelyProcess != null) { livelyProcess.Exited -= LivelyExited; livelyProcess.Dispose(); }
+            browser.Dispose();
+            if (Region != null) Region.Dispose();
+        };
+        // Create a discoverable native HWND before asynchronous startup, without showing a blank window.
+        CreateHandle();
+        shutdownWait = ThreadPool.RegisterWaitForSingleObject(shutdown,
+            delegate(object state, bool timedOut) { QueueUI(RequestShutdown); }, null, Timeout.Infinite, true);
+        BeginInvoke(new Action(async delegate { await InitializeBrowser(); }));
     }
+
+    protected override void SetVisibleCore(bool value) { base.SetVisibleCore(value && allowVisible); }
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -481,17 +671,83 @@ internal sealed class SettingsWindow : Form
         base.OnHandleDestroyed(e);
     }
 
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == 0x10 && shutdown != null && shutdown.WaitOne(0)) shuttingDown = true;
+        if (message.Msg == SettingsProgram.OpenMessage)
+        {
+            long x = message.WParam.ToInt64(), y = message.LParam.ToInt64();
+            if (x >= 0 && x <= SettingsGeometry.CoordinateScale && y >= 0 && y <= SettingsGeometry.CoordinateScale && !shuttingDown)
+            {
+                anchor = new Point((int)x, (int)y);
+                if (Visible || (openRequested && !ready)) HidePanel();
+                else OpenPanel();
+            }
+            message.Result = IntPtr.Zero;
+            return;
+        }
+        base.WndProc(ref message);
+    }
+
+    private void QueueUI(Action action)
+    {
+        if (IsDisposed || Disposing) return;
+        try { BeginInvoke(action); } catch (InvalidOperationException) { }
+    }
+
+    private void PositionPanel()
+    {
+        Screen screen = Screen.PrimaryScreen;
+        Size fitted = new Size(Math.Max(1, Math.Min((int)Math.Round(360 * displayScale), screen.WorkingArea.Width - displayGap * 2)),
+            Math.Max(1, Math.Min((int)Math.Round(700 * displayScale), screen.WorkingArea.Height - displayGap * 2)));
+        if (ClientSize != fitted) { ClientSize = fitted; if (ready) UpdateRegion(); }
+        Location = SettingsGeometry.Position(screen.Bounds, screen.WorkingArea, Size, anchor, displayGap);
+    }
+
+    private void UpdateRegion()
+    {
+        System.Drawing.Region previous = Region;
+        float diameter = (float)Math.Min(cornerRadius * displayScale * 2, Math.Min(ClientSize.Width, ClientSize.Height));
+        if (diameter <= 0) Region = null;
+        else
+        {
+            using (System.Drawing.Drawing2D.GraphicsPath path = new System.Drawing.Drawing2D.GraphicsPath())
+            {
+                path.AddArc(0, 0, diameter, diameter, 180, 90);
+                path.AddArc(ClientSize.Width - diameter, 0, diameter, diameter, 270, 90);
+                path.AddArc(ClientSize.Width - diameter, ClientSize.Height - diameter, diameter, diameter, 0, 90);
+                path.AddArc(0, ClientSize.Height - diameter, diameter, diameter, 90, 90);
+                path.CloseFigure();
+                Region = new System.Drawing.Region(path);
+            }
+        }
+        if (previous != null) previous.Dispose();
+        PublishState();
+    }
+
+    private void PublishState()
+    {
+        if (IsHandleCreated && !IsDisposed)
+            SettingsProgram.SetWindowState(Handle, ready, suspended, cornerRadius * displayScale, Region != null);
+    }
+
     private bool IsDocument(string uri) { return String.Equals(uri, documentUri, StringComparison.OrdinalIgnoreCase); }
 
     private async Task InitializeBrowser()
     {
         try
         {
+            data = await Task.Run(delegate { return SettingsData.WaitForStartup(installDirectory, warmStart, shutdown); });
+            if (data == null || IsDisposed || shuttingDown) { if (!IsDisposed) RequestShutdown(); return; }
+            livelyProcess = Process.GetProcessById(data.LivelyProcessId);
+            livelyProcess.EnableRaisingEvents = true;
+            livelyProcess.Exited += LivelyExited;
+            if (livelyProcess.HasExited) { LivelyExited(livelyProcess, EventArgs.Empty); return; }
             string profile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Grid Wallpaper", "SettingsWebView2");
             CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, profile, null);
-            if (IsDisposed) return;
+            if (IsDisposed || shuttingDown) return;
             await browser.EnsureCoreWebView2Async(environment);
-            if (IsDisposed) return;
+            if (IsDisposed || shuttingDown) return;
             CoreWebView2 core = browser.CoreWebView2;
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreDevToolsEnabled = false;
@@ -514,15 +770,16 @@ internal sealed class SettingsWindow : Form
             core.WebResourceRequested += RestrictResource;
             core.NavigationCompleted += delegate(object sender, CoreWebView2NavigationCompletedEventArgs e)
             {
-                if (!e.IsSuccess) { ShowFailure("The settings panel could not load. Rerun Grid Wallpaper setup."); }
+                if (!e.IsSuccess) QueueUI(delegate { StartupFailure("The settings panel could not load. Rerun Grid Wallpaper setup."); });
             };
             await core.AddScriptToExecuteOnDocumentCreatedAsync("window.GridSettingsWindow = true;");
-            core.Navigate(documentUri);
-            timer.Start();
+            if (!IsDisposed && !shuttingDown) core.Navigate(documentUri);
         }
-        catch (Exception)
+        catch (Exception error)
         {
-            if (!IsDisposed) ShowFailure("The settings window could not initialize. Ensure Microsoft Edge WebView2 Runtime is installed, then rerun setup.");
+            if (!IsDisposed && !shuttingDown)
+                StartupFailure(error is SettingsFailure ? error.Message :
+                    "The settings window could not initialize. Ensure Microsoft Edge WebView2 Runtime is installed, then rerun setup.");
         }
     }
 
@@ -533,15 +790,16 @@ internal sealed class SettingsWindow : Form
         if (Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out uri) && uri.IsFile)
         {
             string file = Path.GetFileName(uri.LocalPath);
-            allowed = SettingsData.SamePath(Path.GetDirectoryName(uri.LocalPath), data.WallpaperDirectory)
-                && (file == "grid-wallpaper.html" || file == "grid-wallpaper.css" || file == "grid-wallpaper.js" || file == "grid-config.js" || file == "grid-settings.js" || file == "grid-native-settings.js");
+            allowed = SettingsData.SamePath(Path.GetDirectoryName(uri.LocalPath), installDirectory)
+                && (file == "grid-wallpaper.html" || file == "grid-wallpaper.css" || file == "grid-wallpaper.js"
+                    || file == "grid-config.js" || file == "grid-settings.js" || file == "grid-native-settings.js");
         }
         if (!allowed) e.Response = browser.CoreWebView2.Environment.CreateWebResourceResponse(Stream.Null, 403, "Blocked", "Content-Type: text/plain");
     }
 
     private void ReceiveMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (browserFailed || closing) return;
+        if (browserFailed || shuttingDown) return;
         try
         {
             if (!IsDocument(e.Source) || !IsDocument(browser.CoreWebView2.Source)) return;
@@ -552,17 +810,21 @@ internal sealed class SettingsWindow : Form
             if (!message.TryGetValue("kind", out kind)) return;
             if (Object.Equals(kind, "ready"))
             {
+                object radiusValue;
+                double radius;
+                if (!message.TryGetValue("radius", out radiusValue) || !SettingsData.NumberValue(radiusValue, out radius)
+                    || radius < 0 || radius > 32) throw new SettingsFailure("The settings panel shape is invalid.");
+                cornerRadius = radius;
                 ready = true;
+                UpdateRegion();
                 Post(new { kind = "init", properties = data.Properties });
+                if (openRequested) ShowPanel();
+                else QueueUI(async delegate { await SuspendHidden(); });
             }
-            else if (Object.Equals(kind, "close")) Close();
-            else if (Object.Equals(kind, "drag"))
-            {
-                SettingsProgram.ReleaseCapture();
-                SettingsProgram.SendMessage(Handle, 0xA1, new IntPtr(2), IntPtr.Zero);
-            }
+            else if (Object.Equals(kind, "close")) HidePanel();
             else if (Object.Equals(kind, "change") && ready)
             {
+                if (refreshing) throw new SettingsFailure("Settings are still loading. Please try the change again.");
                 object changesValue, revisionValue;
                 if (!message.TryGetValue("properties", out changesValue) || !message.TryGetValue("revision", out revisionValue)
                     || !(revisionValue is int || revisionValue is long)) return;
@@ -575,14 +837,92 @@ internal sealed class SettingsWindow : Form
                 foreach (KeyValuePair<string, string> change in validated) pending[change.Key] = change.Value;
                 latestRevision = revision;
                 if (pending.Count == 0 && !saving) Post(new { kind = "saved", revision = latestRevision });
+                else if (!saving) timer.Start();
             }
         }
-        catch (Exception) { Post(new { kind = "error", message = "That settings request was rejected. No unsupported value was applied." }); }
+        catch (Exception error)
+        {
+            Post(new { kind = "error", message = error is SettingsFailure ? error.Message : "That settings request was rejected. No unsupported value was applied." });
+        }
+    }
+
+    private async void OpenPanel()
+    {
+        if (shuttingDown || browserFailed) return;
+        openRequested = true;
+        if (!ready) return;
+        if (saving || pending.Count > 0) { refreshAfterSave = true; ShowPanel(); }
+        else
+        {
+            Task refresh = RefreshNativeProperties();
+            ShowPanel();
+            await refresh;
+        }
+    }
+
+    private void ShowPanel()
+    {
+        if (!ready || shuttingDown || browserFailed) return;
+        try
+        {
+            visibilityEpoch++;
+            browser.Visible = true;
+            browser.CoreWebView2.Resume();
+            suspended = false;
+            PositionPanel();
+            allowVisible = true;
+            Show();
+            Activate();
+            SettingsProgram.SetForegroundWindow(Handle);
+            everOpened = true;
+            PublishState();
+        }
+        catch (COMException) { HandleBrowserFailure(); }
+        catch (InvalidOperationException) { HandleBrowserFailure(); }
+    }
+
+    private void HidePanel()
+    {
+        visibilityEpoch++;
+        openRequested = false;
+        allowVisible = false;
+        browser.Visible = false;
+        Hide();
+        if (shuttingDown) return;
+        if (!saving && pending.Count > 0) { timer.Stop(); savingTask = SavePending(); }
+        else if (!saving) QueueUI(async delegate { await SuspendHidden(); });
+    }
+
+    private async Task RefreshNativeProperties()
+    {
+        if (refreshing || !ready || shuttingDown || !openRequested) return;
+        if (saving || pending.Count > 0) { refreshAfterSave = true; return; }
+        refreshAfterSave = false;
+        refreshing = true;
+        browser.Enabled = false;
+        Post(new { kind = "loading" });
+        try
+        {
+            await Task.Run(delegate { data.ReloadProperties(); });
+            if (!IsDisposed && !shuttingDown) Post(new { kind = "init", properties = data.Properties });
+        }
+        catch (Exception error)
+        {
+            ShowSaveFailure(error is SettingsFailure ? error.Message : "The saved settings could not be refreshed. Check Lively and reopen the panel.");
+        }
+        finally
+        {
+            refreshing = false;
+            if (!IsDisposed) browser.Enabled = true;
+            if (!IsDisposed && !openRequested) QueueUI(async delegate { await SuspendHidden(); });
+        }
     }
 
     private async Task<bool> SavePending()
     {
         saving = true;
+        timer.Stop();
+        bool success = false;
         try
         {
             while (pending.Count > 0)
@@ -592,32 +932,127 @@ internal sealed class SettingsWindow : Form
                 pending.Remove(next.Key);
                 await Task.Run(delegate { data.SaveChange(next.Key, next.Value); });
             }
+            saveFailure = null;
             Post(new { kind = "saved", revision = latestRevision });
+            success = true;
             return true;
         }
         catch (Exception error)
         {
             pending.Clear();
-            Post(new { kind = "error", message = error is SettingsFailure ? error.Message : "Lively could not save the last change. Check that the wallpaper is active and try again." });
+            saveFailure = error is SettingsFailure ? error.Message : "Lively could not save the last change. Check that the wallpaper is active and try again.";
+            if (!shuttingDown) ShowSaveFailure(saveFailure);
             return false;
         }
-        finally { saving = false; }
+        finally
+        {
+            saving = false;
+            if (!IsDisposed && !shuttingDown)
+            {
+                if (success && refreshAfterSave && openRequested) QueueUI(async delegate { await RefreshNativeProperties(); });
+                else if (!openRequested) QueueUI(async delegate { await SuspendHidden(); });
+            }
+        }
+    }
+
+    private bool CanSuspend()
+    {
+        return !IsDisposed && ready && !openRequested && !Visible && !saving && !refreshing && pending.Count == 0 && !shuttingDown && !browserFailed;
+    }
+
+    private async Task SuspendHidden()
+    {
+        if (suspending || !CanSuspend()) return;
+        suspending = true;
+        int epoch = visibilityEpoch;
+        try
+        {
+            browser.Visible = false;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                if (!CanSuspend() || epoch != visibilityEpoch) return;
+                try
+                {
+                    if (!browser.CoreWebView2.IsSuspended) await browser.CoreWebView2.TrySuspendAsync();
+                    if (IsDisposed || shuttingDown) return;
+                    if (openRequested || Visible) { browser.CoreWebView2.Resume(); suspended = false; }
+                    else suspended = browser.CoreWebView2.IsSuspended;
+                    PublishState();
+                    if (suspended || epoch != visibilityEpoch) return;
+                }
+                catch (COMException) { }
+                catch (InvalidOperationException) { }
+                if (attempt < 2) await Task.Delay(100);
+            }
+        }
+        finally
+        {
+            suspending = false;
+            if (epoch != visibilityEpoch && CanSuspend() && !suspended) QueueUI(async delegate { await SuspendHidden(); });
+        }
+    }
+
+    private void LivelyExited(object sender, EventArgs e)
+    {
+        QueueUI(delegate { ownerExited = true; RequestShutdown(); });
+    }
+
+    private void RequestShutdown()
+    {
+        if (IsDisposed || shuttingDown) return;
+        shuttingDown = true;
+        shutdown.Set();
+        Close();
     }
 
     private async void CloseSafely(object sender, FormClosingEventArgs e)
     {
         if (permitClose) return;
-        if (!saving && pending.Count == 0) { if (browserFailed) NotifyBrowserFailure(); return; }
+        if (e.CloseReason == CloseReason.WindowsShutDown)
+        {
+            shuttingDown = true;
+            permitClose = true;
+            timer.Stop();
+            shutdown.Set();
+            e.Cancel = false;
+            return;
+        }
+        if (e.CloseReason == CloseReason.ApplicationExitCall) { shuttingDown = true; shutdown.Set(); }
         e.Cancel = true;
-        if (closing) return;
-        Post(new { kind = "closing" });
-        closing = true;
+        if (!shuttingDown) { HidePanel(); return; }
+        if (shutdownClosing) return;
+        shutdownClosing = true;
         timer.Stop();
+        Post(new { kind = "closing" });
         bool success = saving && savingTask != null ? await savingTask : true;
         if (success && pending.Count > 0) success = await SavePending();
-        if (browserFailed) { NotifyBrowserFailure(); permitClose = true; Close(); }
-        else if (success) { permitClose = true; Close(); }
-        else { closing = false; timer.Start(); }
+        if (!success && !ownerExited && !browserFailed)
+        {
+            shuttingDown = false;
+            shutdownClosing = false;
+            shutdown.Reset();
+            ShowSaveFailure(saveFailure);
+            return;
+        }
+        if (browserFailed && (everOpened || openRequested) && !failureNotified)
+        {
+            failureNotified = true;
+            MessageBox.Show(this, "The settings window stopped responding. Reopen wallpaper settings and check your recent changes.",
+                "Grid Wallpaper Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        else if (!success && ownerExited && everOpened)
+            MessageBox.Show(this, "Lively closed before the last changes could be saved. Reopen the wallpaper and check your settings.",
+                "Grid Wallpaper Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        permitClose = true;
+        Close();
+    }
+
+    private void ShowSaveFailure(string message)
+    {
+        if (IsDisposed || shuttingDown) return;
+        openRequested = true;
+        ShowPanel();
+        Post(new { kind = "error", message = message ?? "The last change could not be saved. Check Lively and try again." });
     }
 
     private void Post(object message)
@@ -636,23 +1071,18 @@ internal sealed class SettingsWindow : Form
     {
         if (IsDisposed || browserFailed) return;
         browserFailed = true;
-        browser.Enabled = false;
-        // The normal close path still finishes bounded pending writes before disposing the browser.
-        if (!closing) BeginInvoke(new Action(Close));
+        ready = false;
+        PublishState();
+        QueueUI(RequestShutdown);
     }
 
-    private void NotifyBrowserFailure()
+    private void StartupFailure(string message)
     {
-        if (failureNotified) return;
-        failureNotified = true;
-        MessageBox.Show(this, "The settings window stopped responding. Reopen wallpaper settings and check your recent changes.",
-            "Grid Wallpaper Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-    }
-
-    private void ShowFailure(string message)
-    {
-        MessageBox.Show(this, message, "Grid Wallpaper Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        if (IsDisposed || shuttingDown) return;
+        if (openRequested || everOpened)
+            MessageBox.Show(message, "Grid Wallpaper Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         permitClose = true;
+        shutdown.Set();
         Close();
     }
 }

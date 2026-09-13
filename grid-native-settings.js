@@ -23,8 +23,7 @@
   }
   function showStatus(message) { status.textContent = message; }
   window.GridSettingsHost = Object.freeze({
-    close() { host.postMessage({ kind: 'close' }); },
-    drag() { host.postMessage({ kind: 'drag' }); }
+    close() { host.postMessage({ kind: 'close' }); }
   });
   api.subscribe(config => {
     if (!ready) return;
@@ -46,6 +45,10 @@
       ready = true;
       setControlsEnabled(true);
       showStatus('Changes save automatically.');
+    } else if (message?.kind === 'loading') {
+      ready = false;
+      setControlsEnabled(false);
+      showStatus('Loading your settings…');
     } else if (message?.kind === 'closing') {
       ready = false;
       setControlsEnabled(false);
@@ -61,6 +64,6 @@
   showStatus('Loading your settings…');
   window.addEventListener('DOMContentLoaded', () => {
     setControlsEnabled(ready);
-    host.postMessage({ kind: 'ready' });
+    host.postMessage({ kind: 'ready', radius: Number.parseFloat(getComputedStyle(document.getElementById('panel')).borderTopRightRadius) });
   }, { once: true });
 })();

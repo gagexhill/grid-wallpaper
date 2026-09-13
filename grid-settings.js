@@ -379,7 +379,10 @@
     suppressClick = false;
     if (canOpenSettingsWindow()) {
       pressFeedback();
-      window.open(api.hostSettings.settingsUri, '_blank');
+      const button = menu.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (button.left + button.width / 2) / window.innerWidth));
+      const y = Math.max(0, Math.min(1, (button.top + button.height / 2) / window.innerHeight));
+      window.open(`${api.hostSettings.settingsUri}open?x=${x.toFixed(6)}&y=${y.toFixed(6)}`, '_blank');
     } else if (panel.hidden) openPanel();
     else closePanel();
   });
@@ -392,12 +395,6 @@
   });
   document.addEventListener('pointerdown', event => {
     if (!isSettingsWindow && !panel.hidden && !panel.contains(event.target) && !menu.contains(event.target)) closePanel(false);
-  });
-  panel.querySelector('.panel-header').addEventListener('pointerdown', event => {
-    if (!isSettingsWindow || !event.isPrimary || event.button !== 0
-      || event.target.closest('button, a, input, select, textarea, [role="button"]')) return;
-    event.preventDefault();
-    window.GridSettingsHost.drag();
   });
 
   function syncExpandButton() {

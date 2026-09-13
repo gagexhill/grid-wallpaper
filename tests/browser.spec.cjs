@@ -168,8 +168,11 @@ test('Lively WebView2 opens the custom panel link while other hosts keep the inl
     window.open = (...args) => window.openedSettings.push(args);
     livelyPropertyListener('count', 5);
   });
+  const button = await page.locator('#hamburger').boundingBox();
+  const viewport = page.viewportSize();
   await page.locator('#hamburger').click();
-  expect(await page.evaluate(() => window.openedSettings)).toEqual([['grid-wallpaper-settings:', '_blank']]);
+  const expectedLink = `grid-wallpaper-settings:open?x=${((button.x + button.width / 2) / viewport.width).toFixed(6)}&y=${((button.y + button.height / 2) / viewport.height).toFixed(6)}`;
+  expect(await page.evaluate(() => window.openedSettings)).toEqual([[expectedLink, '_blank']]);
   await expect(page.locator('#panel')).toBeHidden();
   await page.evaluate(() => { delete window.chrome.webview; });
   await page.locator('#hamburger').click();
@@ -193,7 +196,8 @@ test('custom host preserves the panel and confirms only saved revisions', async 
   await expect(page.locator('#panel')).toBeVisible();
   await expect(page.locator('#hamburger')).toBeHidden();
   await expect(page.locator('#setting-count')).toBeDisabled();
-  expect(await page.evaluate(() => window.hostMessages)).toEqual([{ kind: 'ready' }]);
+  const radius = await page.locator('#panel').evaluate(panel => Number.parseFloat(getComputedStyle(panel).borderTopRightRadius));
+  expect(await page.evaluate(() => window.hostMessages)).toEqual([{ kind: 'ready', radius }]);
   expect(await page.evaluate(() => window.animationRequests)).toBe(0);
   await page.evaluate(properties => window.receiveHostMessage({ data: { kind: 'init', properties } }), nativeProperties);
   await expect(page.locator('#setting-count')).toBeEnabled();
@@ -219,8 +223,6 @@ test('custom host preserves the panel and confirms only saved revisions', async 
   expect(panel).toEqual({ x: 0, y: 0, width: 360, height: 700 });
   await page.locator('#panel').evaluate(node => { node.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('custom-settings-panel.png') });
-  await page.locator('.panel-header').dispatchEvent('pointerdown', { isPrimary: true, button: 0 });
-  expect(await page.evaluate(() => window.hostMessages.at(-1))).toEqual({ kind: 'drag' });
   await page.keyboard.press('Escape');
   expect(await page.evaluate(() => window.hostMessages.at(-1))).toEqual({ kind: 'close' });
   await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'closing' } }));

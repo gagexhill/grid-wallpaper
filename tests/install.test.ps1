@@ -18,6 +18,9 @@ $registryFixtureId = [Guid]::NewGuid().ToString('N')
 $registryFixtureName = 'grid-wallpaper-test-' + $registryFixtureId
 $registryFixtureKey = 'HKCU:\Software\Classes\' + $registryFixtureName
 $registrySiblingKey = $registryFixtureKey + '-unrelated'
+$registryStartupKey = $registryFixtureKey + '-startup'
+$registryStartupName = 'WarmStart-' + $registryFixtureId
+$registryStartupSiblingName = 'UnrelatedFixtureStartup'
 $registryFixturesReserved = $false
 $configJunctionPath = Join-Path $fixtureDirectory 'linked-host-config\windows-host.json'
 $module = $null
@@ -43,7 +46,7 @@ function Write-Fixture([string]$Path, [string]$Content) {
 }
 
 try {
-    foreach ($registryPath in @($registryFixtureKey, $registrySiblingKey)) {
+    foreach ($registryPath in @($registryFixtureKey, $registrySiblingKey, $registryStartupKey)) {
         Assert-Check (-not (Test-Path -LiteralPath $registryPath)) 'Registry fixture keys must not already exist.'
         $mergedPath = 'Registry::HKEY_CLASSES_ROOT\' + (Split-Path $registryPath -Leaf)
         Assert-Check (-not (Test-Path -LiteralPath $mergedPath)) 'Registry fixture schemes must not shadow existing registrations.'
@@ -73,12 +76,16 @@ try {
     $normalDataLiteral = "'" + $normalDataDirectory.Replace("'", "''") + "'"
     $settingsKeyLiteral = "'" + $registryFixtureKey.Replace("'", "''") + "'"
     $settingsUriLiteral = "'" + $registryFixtureName + ":'"
+    $startupKeyLiteral = "'" + $registryStartupKey.Replace("'", "''") + "'"
+    $startupNameLiteral = "'" + $registryStartupName + "'"
     $runtimeLiterals = @($runtimeNames | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ', '
     $moduleText = '$ErrorActionPreference = ''Stop''' + "`n" +
         'Set-StrictMode -Version 2.0' + "`n" +
         '$normalDataDirectory = ' + $normalDataLiteral + "`n" +
         '$runtimeFiles = @(' + $runtimeLiterals + ')' + "`n" +
         '$settingsKey = ' + $settingsKeyLiteral + "`n" +
+        '$startupKey = ' + $startupKeyLiteral + "`n" +
+        '$startupName = ' + $startupNameLiteral + "`n" +
         '$integration = [pscustomobject]@{ settingsUri = ' + $settingsUriLiteral + ' }' + "`n" +
         ($helperDefinitions -join "`n`n")
     $modulePath = Join-Path $packageDirectory 'installer-fixture.psm1'
@@ -228,34 +235,76 @@ try {
 
     Assert-SettingsLink
     Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'Checking an available settings scheme must not register it.'
+    Assert-Check (-not (Test-Path -LiteralPath $registryStartupKey)) 'Checking an available settings scheme must not create a startup key.'
     Assert-Fails { Register-SettingsLink $blockedHostDirectory } 'A missing host must fail before registration.' 'settings host is missing'
     Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'A missing host must leave the registry unchanged.'
+    Assert-Check (-not (Test-Path -LiteralPath $registryStartupKey)) 'A missing host must not create a startup entry.'
+    $null = New-Item -Path $registryStartupKey
+    $null = New-ItemProperty -LiteralPath $registryStartupKey -Name $registryStartupSiblingName -Value 'preserve unrelated startup' -PropertyType String
     Register-SettingsLink $expectedCustomDestination
     $commandKey = Join-Path $registryFixtureKey 'shell\open\command'
-    $expectedCommand = '"' + (Join-Path $expectedCustomDestination 'grid-settings.exe') + '"'
+    $expectedCommand = '"' + (Join-Path $expectedCustomDestination 'grid-settings.exe') + '" --uri "%1"'
+    $expectedWarmCommand = '"' + (Join-Path $expectedCustomDestination 'grid-settings.exe') + '" --warm'
     $registeredCommand = (Get-Item -LiteralPath $commandKey).GetValue('')
-    Assert-Check ($registeredCommand -ceq $expectedCommand) 'The settings command must be the exact quoted host path with no arguments.'
-    Assert-Check ($registeredCommand -notmatch '%(?:1|[Ll]|\*)') 'Settings links must never forward URI payloads.'
+    Assert-Check ($registeredCommand -ceq $expectedCommand) 'The settings command must use the exact quoted host path and one quoted --uri placeholder.'
+    Assert-Check ([regex]::Matches($registeredCommand, '%1').Count -eq 1 -and $registeredCommand -notmatch '%(?:[Ll]|\*)') 'Only the single URI argument may be passed to the native validator.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName) -ceq $expectedWarmCommand) 'Warm startup must use the exact quoted host path and fixed --warm argument.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'First registration must preserve unrelated startup entries.'
     $registeredKey = Get-Item -LiteralPath $registryFixtureKey
     Assert-Check ($registeredKey.GetValue('GridWallpaperManaged', 0) -eq 1) 'Registration must mark the exact scheme as managed.'
+    Assert-Check ($registeredKey.GetValue('GridWallpaperWarmStartManaged', 0) -eq 1) 'Registration must record ownership of its warm-start entry.'
     Assert-Check ($registeredKey.GetValueNames() -contains 'URL Protocol') 'Registration must identify the scheme as a URL protocol.'
     Assert-Check ($registeredKey.GetValue('URL Protocol') -ceq '') 'The URL protocol marker must be an empty string.'
     $registeredKey.Dispose()
     Register-SettingsLink $expectedCustomDestination
     Assert-Check ((Get-Item -LiteralPath $commandKey).GetValue('') -ceq $expectedCommand) 'Repeated settings registration must retain the fixed command.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName) -ceq $expectedWarmCommand) 'Repeated registration must retain the fixed warm-start command.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Repeated registration must preserve unrelated startup entries.'
     $relocatedHostDirectory = Join-Path $fixtureDirectory 'relocated host'
     Write-Fixture (Join-Path $relocatedHostDirectory 'grid-settings.exe') 'This is a path fixture, not an executable.'
     Register-SettingsLink $relocatedHostDirectory
-    Assert-Check ((Get-Item -LiteralPath $commandKey).GetValue('') -ceq ('"' + (Join-Path $relocatedHostDirectory 'grid-settings.exe') + '"')) 'Registration must update an owned link when the installation directory changes.'
-    Write-Output 'PASS fixed settings host command and repeat registration'
+    Assert-Check ((Get-Item -LiteralPath $commandKey).GetValue('') -ceq ('"' + (Join-Path $relocatedHostDirectory 'grid-settings.exe') + '" --uri "%1"')) 'Registration must update an owned link when the installation directory changes.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName) -ceq ('"' + (Join-Path $relocatedHostDirectory 'grid-settings.exe') + '" --warm')) 'Registration must update the owned warm-start entry when the installation directory changes.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Relocation must preserve unrelated startup entries.'
+    Write-Output 'PASS exact URI and warm-start commands with repeat registration'
 
     $null = New-Item -Path $registrySiblingKey
     $null = New-ItemProperty -LiteralPath $registrySiblingKey -Name 'UnrelatedSentinel' -Value 'preserve sibling' -PropertyType String
     Remove-SettingsLink
     Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'Removal must delete the exact owned registration.'
+    Assert-Check (Test-Path -LiteralPath $registryStartupKey) 'Removal must preserve the startup key itself.'
+    Assert-Check ($null -eq (Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName, $null)) 'Removal must delete only the owned warm-start entry.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Removal must preserve unrelated startup entries.'
     Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Removal must preserve unrelated sibling registrations.'
     Remove-SettingsLink
     Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Repeated removal must leave unrelated registrations unchanged.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Repeated removal must leave unrelated startup entries unchanged.'
+
+    $null = New-ItemProperty -LiteralPath $registryStartupKey -Name $registryStartupName -Value 'existing startup owner' -PropertyType String
+    Assert-Fails { Assert-SettingsLink } 'An occupied startup value without a protocol owner must be rejected.' 'startup entry is owned by another application'
+    Assert-Fails { Register-SettingsLink $expectedCustomDestination } 'Registration must not overwrite an occupied startup value.' 'startup entry is owned by another application'
+    Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'A startup collision must fail before creating the protocol registration.'
+    Remove-SettingsLink
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName) -ceq 'existing startup owner') 'Removal without protocol ownership must preserve an occupied startup value.'
+    $null = New-Item -Path $registryFixtureKey
+    $null = New-ItemProperty -LiteralPath $registryFixtureKey -Name 'GridWallpaperManaged' -Value 1 -PropertyType DWord
+    Assert-Fails { Assert-SettingsLink } 'Protocol ownership alone must not claim an existing startup entry.' 'startup entry is owned by another application'
+    Assert-Fails { Register-SettingsLink $expectedCustomDestination } 'Registration must require the warm-start ownership marker for an existing startup entry.' 'startup entry is owned by another application'
+    Assert-Fails { Remove-SettingsLink } 'Removal must reject an existing startup entry without the warm-start ownership marker.' 'startup entry is owned by another application'
+    $null = New-ItemProperty -LiteralPath $registryFixtureKey -Name 'GridWallpaperWarmStartManaged' -Value 0 -PropertyType DWord
+    Assert-Fails { Register-SettingsLink $expectedCustomDestination } 'A zero warm-start ownership marker must reject an occupied startup entry.' 'startup entry is owned by another application'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName) -ceq 'existing startup owner') 'Warm-start ownership collisions must preserve the existing command.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Warm-start ownership collisions must preserve unrelated startup entries.'
+    Assert-Check (-not (Test-Path -LiteralPath $commandKey)) 'Warm-start ownership collisions must not create a protocol command.'
+    $null = Remove-ItemProperty -LiteralPath $registryStartupKey -Name $registryStartupName
+    Register-SettingsLink $expectedCustomDestination
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName) -ceq $expectedWarmCommand) 'An owned protocol with no startup entry must upgrade to managed warm startup.'
+    Remove-SettingsLink
+    Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'Removal after a warm-start upgrade must remove the owned protocol.'
+    Assert-Check ($null -eq (Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName, $null)) 'Removal after a warm-start upgrade must remove its startup value.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Upgrade and removal must preserve unrelated startup entries.'
+    Write-Output 'PASS warm-start ownership collisions, upgrade, and exact removal'
+
     $null = New-Item -Path $registryFixtureKey
     $null = New-ItemProperty -LiteralPath $registryFixtureKey -Name 'CollisionSentinel' -Value 'preserve existing registration' -PropertyType String
     Assert-Fails { Assert-SettingsLink } 'An unmarked settings scheme must be rejected.' 'owned by another application'
@@ -272,14 +321,15 @@ try {
 } finally {
     if ($module) { Remove-Module -ModuleInfo $module -Force }
     if ($registryFixturesReserved) {
-        foreach ($registryPath in @($registryFixtureKey, $registrySiblingKey)) {
+        foreach ($registryPath in @($registryFixtureKey, $registrySiblingKey, $registryStartupKey)) {
             if (-not (Test-Path -LiteralPath $registryPath)) { continue }
             $registryItem = Get-Item -LiteralPath $registryPath
             $expectedRegistryName = $registryPath.Replace('HKCU:', 'HKEY_CURRENT_USER')
             $expectedRegistryRoot = 'HKEY_CURRENT_USER\Software\Classes\grid-wallpaper-test-' + $registryFixtureId
             if ($registryFixtureId -cnotmatch '^[a-f0-9]{32}$' -or
                 $registryItem.Name -cne $expectedRegistryName -or
-                ($registryItem.Name -cne $expectedRegistryRoot -and $registryItem.Name -cne ($expectedRegistryRoot + '-unrelated'))) {
+                ($registryItem.Name -cne $expectedRegistryRoot -and $registryItem.Name -cne ($expectedRegistryRoot + '-unrelated') -and
+                    $registryItem.Name -cne ($expectedRegistryRoot + '-startup'))) {
                 throw 'Refusing to clean a registry key outside the exact GUID-owned test registrations.'
             }
             $registryItem.Dispose()

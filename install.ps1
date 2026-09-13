@@ -10,7 +10,7 @@ Checks the package and describes the installation without changing files or apps
 .PARAMETER SkipLaunch
 Installs the package without starting Lively or changing the active wallpaper.
 .PARAMETER RemoveSettingsLink
-Removes the per-user settings link without deleting wallpapers or Lively.
+Removes the per-user settings link and warm-start entry without deleting wallpapers or Lively.
 .PARAMETER ReadyTimeoutSeconds
 Maximum time to wait for Lively startup or its first-run setup before reporting
 the remaining setup step. Complete that setup and rerun this command to continue.
@@ -36,6 +36,8 @@ $normalDataDirectory = Join-Path $env:LOCALAPPDATA 'Lively Wallpaper'
 $integration = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows-integration.json') -Raw | ConvertFrom-Json
 if ($integration.settingsUri -notmatch '^[a-z][a-z0-9-]{2,50}:$') { throw 'Invalid settings link metadata.' }
 $settingsKey = 'HKCU:\Software\Classes\' + $integration.settingsUri.TrimEnd(':')
+$startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$startupName = 'GridWallpaperSettings'
 
 function Get-RuntimeSource($File) {
     $sourcePath = Join-Path $PSScriptRoot $File
@@ -53,6 +55,13 @@ function Assert-SettingsLink {
     } elseif (Test-Path -LiteralPath ('Registry::HKEY_CLASSES_ROOT\' + $integration.settingsUri.TrimEnd(':'))) {
         throw 'The settings link is already registered by another application. Nothing was overwritten.'
     }
+    if (Test-Path -LiteralPath $startupKey) {
+        $startupValue = (Get-Item -LiteralPath $startupKey).GetValue($startupName, $null)
+        if ($null -ne $startupValue -and (-not (Test-Path -LiteralPath $settingsKey) -or
+            (Get-Item -LiteralPath $settingsKey).GetValue('GridWallpaperWarmStartManaged', 0) -ne 1)) {
+            throw 'The settings startup entry is owned by another application. Nothing was overwritten.'
+        }
+    }
 }
 
 function Register-SettingsLink($Destination) {
@@ -64,14 +73,22 @@ function Register-SettingsLink($Destination) {
     $null = New-ItemProperty -LiteralPath $settingsKey -Name '(default)' -Value 'URL:Grid Wallpaper Settings' -PropertyType String -Force
     $null = New-ItemProperty -LiteralPath $settingsKey -Name 'URL Protocol' -Value '' -PropertyType String -Force
     $null = New-ItemProperty -LiteralPath $settingsKey -Name 'GridWallpaperManaged' -Value 1 -PropertyType DWord -Force
-    $command = '"' + $executable + '"'
+    $command = '"' + $executable + '" --uri "%1"'
     $null = New-ItemProperty -LiteralPath $commandKey -Name '(default)' -Value $command -PropertyType String -Force
     if ((Get-Item -LiteralPath $commandKey).GetValue('') -cne $command) { throw 'Settings link verification failed.' }
+    if (-not (Test-Path -LiteralPath $startupKey)) { $null = New-Item -Path $startupKey }
+    $null = New-ItemProperty -LiteralPath $settingsKey -Name 'GridWallpaperWarmStartManaged' -Value 1 -PropertyType DWord -Force
+    $warmCommand = '"' + $executable + '" --warm'
+    $null = New-ItemProperty -LiteralPath $startupKey -Name $startupName -Value $warmCommand -PropertyType String -Force
+    if ((Get-Item -LiteralPath $startupKey).GetValue($startupName) -cne $warmCommand) { throw 'Settings warm-start verification failed.' }
 }
 
 function Remove-SettingsLink {
     if (-not (Test-Path -LiteralPath $settingsKey)) { return }
     Assert-SettingsLink
+    if ((Test-Path -LiteralPath $startupKey) -and $null -ne (Get-Item -LiteralPath $startupKey).GetValue($startupName, $null)) {
+        Remove-ItemProperty -LiteralPath $startupKey -Name $startupName -ErrorAction Stop
+    }
     if ((Get-Item -LiteralPath $settingsKey).Name -cne $settingsKey.Replace('HKCU:', 'HKEY_CURRENT_USER')) { throw 'Refusing to remove a registration outside the exact owned key.' }
     Remove-Item -LiteralPath $settingsKey -Recurse -Force
 }
@@ -98,6 +115,30 @@ function Close-SettingsHost($Destination) {
     $command = Start-Process -FilePath $executable -ArgumentList '--close' -WindowStyle Hidden -PassThru
     if (-not $command.WaitForExit(18000) -or $command.ExitCode -ne 0) { throw 'Close Grid settings, allow pending changes to save, and rerun setup. No settings process was force-stopped.' }
     if (@($running | Where-Object { -not $_.HasExited }).Count) { throw 'Grid settings is still closing. Rerun setup after its window closes.' }
+}
+
+function Warm-SettingsHost($Destination) {
+    $executable = Join-Path $Destination 'grid-settings.exe'
+    $null = Start-Process -FilePath $executable -ArgumentList '--warm' -WindowStyle Hidden -PassThru
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = $executable
+        $start.Arguments = '--status'
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $probe = [Diagnostics.Process]::Start($start)
+        try {
+            if (-not $probe.WaitForExit(2000)) { break }
+            if ($probe.ExitCode -eq 0) {
+                $status = $probe.StandardOutput.ReadToEnd() | ConvertFrom-Json
+                if ($status.running -and $status.ready) { Write-Output 'Grid settings is ready for quick opening.'; return }
+            }
+        } finally { $probe.Dispose() }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Write-Warning 'The settings panel is still preparing. If it does not open, confirm Grid Wallpaper is active on the primary display with Lively''s WebView2 player.'
 }
 
 function Find-Lively {
@@ -249,8 +290,13 @@ try {
     if ($env:OS -ne 'Windows_NT') { throw 'Desktop installation requires Windows. Open grid-wallpaper.html in a browser to preview on other systems.' }
     if ($RemoveSettingsLink) {
         Assert-SettingsLink
-        if ($Preview) { Write-Output 'Would remove only the per-user Grid Wallpaper settings link.' }
-        else { Remove-SettingsLink; Write-Output 'Removed the settings link. Wallpapers and Lively were left in place.' }
+        if ($Preview) { Write-Output 'Would remove only the per-user Grid Wallpaper settings link and warm-start entry.' }
+        else {
+            $registeredCommand = if (Test-Path -LiteralPath (Join-Path $settingsKey 'shell\open\command')) { (Get-Item -LiteralPath (Join-Path $settingsKey 'shell\open\command')).GetValue('') } else { '' }
+            if ($registeredCommand -match '^"([^"]+\\grid-settings\.exe)"(?: --uri "%1")?$') { Close-SettingsHost (Split-Path $matches[1] -Parent) }
+            Remove-SettingsLink
+            Write-Output 'Removed the settings link and warm-start entry. Wallpapers and Lively were left in place.'
+        }
         return
     }
     Assert-SettingsLink
@@ -263,7 +309,7 @@ try {
     $state = Get-LivelyState $lively -AllowInitializing
     if ($Preview) {
         Write-Output 'Preview only: no files, applications, wallpaper, or settings were changed.'
-        Write-Output 'Would register a per-user link to the fixed Grid settings command.'
+        Write-Output 'Would register the per-user Grid settings link and a warm-start entry for responsive controls.'
         if ($lively) { Write-Output ('Lively: ' + $lively.Executable) }
         else { Write-Output ('Would install with WinGet: ' + $packageId + ' (official stable package).') }
         if ($state.SettingsReady) {
@@ -336,6 +382,7 @@ try {
     Write-Output ('Grid Wallpaper files installed and verified: ' + $state.Destination)
     $arguments = 'setwp --file "' + $state.CommandDirectory + '"'
     Invoke-LivelyCommand $arguments
+    Warm-SettingsHost $state.Destination
     if ($refreshLibrary) {
         Write-Output 'Refreshing the Lively library window to show the wallpaper thumbnail and description.'
         $uiPath = Get-LivelyUiPath $lively

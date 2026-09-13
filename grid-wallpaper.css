@@ -131,8 +131,6 @@ input[type="color"] { width: 52px; height: 48px; flex: 0 0 52px; padding: 4px; b
   margin: 0;
   box-shadow: none;
 }
-.settings-window .panel-header { cursor: grab; user-select: none; touch-action: none; }
-.settings-window .panel-header:active { cursor: grabbing; }
 
 @media (max-width: 360px) {
   #panel { padding-right: 12px; padding-left: 12px; }
