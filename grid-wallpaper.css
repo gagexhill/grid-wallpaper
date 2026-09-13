@@ -5,6 +5,7 @@
   background: #181816;
   font-size: 14px;
   accent-color: #c8c8b1;
+  --settings-gap: 16px;
 }
 
 * { box-sizing: border-box; }
@@ -36,8 +37,8 @@ button:disabled, input:disabled { cursor: default; opacity: .55; }
 #vignette.on { opacity: 1; }
 #hamburger {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: var(--settings-gap);
+  right: var(--settings-gap);
   z-index: 2;
   display: grid;
   place-items: center;
@@ -48,13 +49,15 @@ button:disabled, input:disabled { cursor: default; opacity: .55; }
   touch-action: none;
   user-select: none;
 }
+#hamburger svg { transition: transform 90ms ease-out; }
+#hamburger:active:not(.dragging) svg { transform: scale(.82); }
 #hamburger.dragging { cursor: grabbing; }
 #panel {
   position: fixed;
   z-index: 3;
   top: 76px;
-  right: 16px;
-  width: min(360px, calc(100vw - 32px));
+  right: var(--settings-gap);
+  width: min(360px, calc(100vw - 2 * var(--settings-gap)));
   max-height: calc(100vh - 92px);
   max-height: calc(100dvh - 92px);
   padding: 0 18px 16px;
@@ -118,4 +121,9 @@ input[type="color"] { width: 52px; height: 48px; flex: 0 0 52px; padding: 4px; b
 
 @media (max-width: 360px) {
   #panel { padding-right: 12px; padding-left: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #hamburger svg { transition: none; }
+  #hamburger:active:not(.dragging) svg { transform: none; }
 }

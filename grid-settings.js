@@ -25,6 +25,23 @@
     return;
   }
 
+  const edgeGap = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--settings-gap'));
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let layoutHostManaged = api.hostManaged;
+  let pressAnimation;
+
+  function pressFeedback() {
+    pressAnimation?.cancel();
+    if (!reducedMotion.matches) {
+      pressAnimation = menu.querySelector('svg').animate([
+        { transform: 'scale(1)' },
+        { transform: 'scale(.78)', offset: .35 },
+        { transform: 'scale(1)' }
+      ], { duration: 180, easing: 'ease-out' });
+    }
+  }
+  reducedMotion.addEventListener('change', () => { if (reducedMotion.matches) pressAnimation?.cancel(); });
+
   function setText(node, text) {
     if (node.textContent !== text) node.textContent = text;
   }
@@ -235,16 +252,72 @@
         ? 'Settings save in this browser on this device.'
         : 'Browser storage is unavailable. Settings last until this page closes.';
     setText(document.getElementById('save-status'), message);
+    if (layoutHostManaged !== api.hostManaged) {
+      layoutHostManaged = api.hostManaged;
+      refreshLayout();
+    }
+  }
+
+  function availableBounds() {
+    const viewport = window.visualViewport;
+    const bounds = {
+      left: Math.max(0, viewport?.offsetLeft || 0),
+      top: Math.max(0, viewport?.offsetTop || 0),
+      right: window.innerWidth,
+      bottom: window.innerHeight
+    };
+    if (viewport) {
+      bounds.right = Math.min(bounds.right, bounds.left + viewport.width);
+      bounds.bottom = Math.min(bounds.bottom, bounds.top + viewport.height);
+    }
+    if (!api.hostManaged) return bounds;
+
+    const screen = window.screen;
+    const scaleX = window.outerWidth > 0 ? window.innerWidth / window.outerWidth : 1;
+    const scaleY = window.outerHeight > 0 ? window.innerHeight / window.outerHeight : 1;
+    // Borderless host coordinates and the screen work area share screen CSS pixels.
+    // Convert to content pixels; monitor origins may be negative and page scale may differ.
+    const work = {
+      left: (screen.availLeft - window.screenX) * scaleX,
+      top: (screen.availTop - window.screenY) * scaleY,
+      right: (screen.availLeft + screen.availWidth - window.screenX) * scaleX,
+      bottom: (screen.availTop + screen.availHeight - window.screenY) * scaleY
+    };
+    const intersect = {
+      left: Math.max(bounds.left, work.left),
+      top: Math.max(bounds.top, work.top),
+      right: Math.min(bounds.right, work.right),
+      bottom: Math.min(bounds.bottom, work.bottom)
+    };
+    if (Object.values(intersect).every(Number.isFinite)
+      && intersect.right - intersect.left >= Math.min(240, bounds.right - bounds.left)
+      && intersect.bottom - intersect.top >= Math.min(192, bounds.bottom - bounds.top)) return intersect;
+
+    // Some embedded players omit window origins. Reserve unavailable screen extents
+    // at both edges rather than mistake a different monitor's origin for usable space.
+    const reserve = (total, available, size) => Number.isFinite(total) && total > 0
+      && Number.isFinite(available) && available > 0 && available <= total
+      ? Math.min(size / 4, (total - available) * size / total) : 0;
+    const horizontal = reserve(screen.width, screen.availWidth, window.innerWidth);
+    const vertical = reserve(screen.height, screen.availHeight, window.innerHeight);
+    return {
+      left: bounds.left + horizontal, top: bounds.top + vertical,
+      right: bounds.right - horizontal, bottom: bounds.bottom - vertical
+    };
   }
 
   function placePanel() {
     const button = menu.getBoundingClientRect();
-    const leftSide = button.left + button.width / 2 < window.innerWidth / 2;
-    panel.style.left = leftSide ? '16px' : 'auto';
-    panel.style.right = leftSide ? 'auto' : '16px';
-    const top = button.top < window.innerHeight / 2 ? button.bottom + 12 : 16;
+    const bounds = availableBounds();
+    const leftSide = button.left + button.width / 2 < (bounds.left + bounds.right) / 2;
+    panel.style.left = leftSide ? `${bounds.left + edgeGap}px` : 'auto';
+    panel.style.right = leftSide ? 'auto' : `${window.innerWidth - bounds.right + edgeGap}px`;
+    panel.style.maxWidth = `${Math.max(48, bounds.right - bounds.left - edgeGap * 2)}px`;
+    const below = button.top + button.height / 2 < (bounds.top + bounds.bottom) / 2;
+    const top = below ? button.bottom + 12 : bounds.top + edgeGap;
+    const bottom = below ? bounds.bottom - edgeGap : button.top - 12;
     panel.style.top = `${top}px`;
-    panel.style.maxHeight = `${Math.max(48, window.innerHeight - top - 16)}px`;
+    panel.style.maxHeight = `${Math.max(48, bottom - top)}px`;
   }
 
   function closePanel(restoreFocus = true) {
@@ -254,15 +327,18 @@
     panel.inert = true;
     menu.setAttribute('aria-expanded', 'false');
     menu.setAttribute('aria-label', 'Open grid settings');
+    pressFeedback();
   }
 
   function openPanel() {
     render();
+    refreshLayout();
     placePanel();
     panel.hidden = false;
     panel.inert = false;
     menu.setAttribute('aria-expanded', 'true');
     menu.setAttribute('aria-label', 'Close grid settings');
+    pressFeedback();
     closeButton.focus();
   }
 
@@ -299,10 +375,12 @@
 
   let drag = null;
   function moveMenu(left, top) {
-    const maxLeft = Math.max(8, window.innerWidth - menu.offsetWidth - 8);
-    const maxTop = Math.max(8, window.innerHeight - menu.offsetHeight - 8);
-    menu.style.left = `${Math.max(8, Math.min(maxLeft, left))}px`;
-    menu.style.top = `${Math.max(8, Math.min(maxTop, top))}px`;
+    const bounds = availableBounds();
+    const minLeft = bounds.left + edgeGap, minTop = bounds.top + edgeGap;
+    const maxLeft = Math.max(minLeft, bounds.right - menu.offsetWidth - edgeGap);
+    const maxTop = Math.max(minTop, bounds.bottom - menu.offsetHeight - edgeGap);
+    menu.style.left = `${Math.max(minLeft, Math.min(maxLeft, left))}px`;
+    menu.style.top = `${Math.max(minTop, Math.min(maxTop, top))}px`;
     menu.style.right = 'auto';
   }
   menu.addEventListener('pointerdown', event => {
@@ -326,9 +404,10 @@
     if (!drag || event.pointerId !== drag.id) return;
     suppressClick = drag.moved;
     if (drag.moved) {
-      const bounds = menu.getBoundingClientRect();
-      const leftSide = bounds.left + bounds.width / 2 < window.innerWidth / 2;
-      moveMenu(leftSide ? 16 : window.innerWidth - bounds.width - 16, bounds.top);
+      const button = menu.getBoundingClientRect();
+      const bounds = availableBounds();
+      const leftSide = button.left + button.width / 2 < (bounds.left + bounds.right) / 2;
+      moveMenu(leftSide ? bounds.left + edgeGap : bounds.right - button.width - edgeGap, button.top);
     }
     drag = null;
     menu.classList.remove('dragging');
@@ -337,12 +416,18 @@
   menu.addEventListener('pointerup', finishDrag);
   menu.addEventListener('pointercancel', finishDrag);
   menu.addEventListener('lostpointercapture', finishDrag);
-  window.addEventListener('resize', () => {
+  function refreshLayout() {
     const bounds = menu.getBoundingClientRect();
     moveMenu(bounds.left, bounds.top);
     if (!panel.hidden) placePanel();
-  });
+  }
+  window.addEventListener('resize', refreshLayout);
+  window.addEventListener('focus', refreshLayout);
+  window.visualViewport?.addEventListener('resize', refreshLayout);
+  window.visualViewport?.addEventListener('scroll', refreshLayout);
+  window.screen.addEventListener?.('change', refreshLayout);
 
   api.subscribe(render);
   render();
+  refreshLayout();
 })();

@@ -13,11 +13,12 @@ Use the lockfile with `npm ci`, then run one completed command at a time:
 ```powershell
 npm run check
 npm run test:browser
+npm run test:install
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Preview
 npm run package
 ```
 
-Node's built-in tests cover lifecycle and settings regressions. Playwright uses installed Edge, one worker and no retries; browser screenshots and traces are ignored runtime evidence under `test-results/`. They prove browser rendering only. `npm run generate` refreshes native properties after canonical configuration changes. `npm run check` fails when the generated JSON drifts.
+Node's built-in tests cover lifecycle and settings regressions. Playwright uses installed Edge, one worker and no retries; browser screenshots and traces are ignored runtime evidence under `test-results/`. They prove browser rendering only. Windows PowerShell tests exercise installer functions in isolated temporary fixtures without launching or modifying Lively. `npm run generate` refreshes native properties after canonical configuration changes. `npm run check` fails when the generated JSON drifts.
 
 Repository Actions must not execute without separate Owner authorization. Before publication, inspect `gh api repos/gagexhill/grid-wallpaper/actions/permissions` and workflows. Dependency metadata does not authorize runner execution.
 
@@ -25,7 +26,9 @@ Repository Actions must not execute without separate Owner authorization. Before
 
 The entry command is in README. `install.ps1 -Preview` changes nothing; `-SkipLaunch` prepares/copies files without opening Lively or changing the active wallpaper. The installer honors Lively's native library setting and verifies copied hashes. A successful CLI submission is not evidence that desktop playback rendered correctly.
 
-Run the same installer from a new extracted package to update. It retains Lively's separate saved customization. Complete Lively's first-run wizard when requested. If WinGet is absent, install/update Microsoft's App Installer, reopen PowerShell, and rerun. If another wallpaper already occupies the intended target, the installer stops instead of overwriting it.
+Run the same installer from a new extracted package to update. It retains Lively's separate saved customization and waits for a readable native library location before copying files. If startup does not finish in time, setup exits with code 2 and can be rerun. `-SkipLaunch` also returns 2 when Lively has not initialized its library yet. Complete Lively's first-run wizard when requested. If WinGet is absent, install/update Microsoft's App Installer, reopen PowerShell, and rerun. If another wallpaper already occupies the intended target, the installer stops instead of overwriting it.
+
+When the thumbnail or metadata changes, setup closes and reopens Lively's library window through native commands so its cached tile updates. The wallpaper core remains running. If the window takes too long to close, reopen it from Lively's tray icon.
 
 Use Lively's library to remove Grid Wallpaper or select another wallpaper. Uninstall Lively through Windows Installed apps only if it is no longer wanted. There is no custom service, scheduled task, background updater or global execution-policy change to undo.
 
@@ -40,6 +43,10 @@ Record exact source commit, package SHA256, Windows/Lively versions, display con
 `wallpaper-files.json` owns the runtime file allowlist used by the installer and packager. `scripts/package.ps1` writes the zip and SHA256 under ignored `dist/`. It excludes Git history, developer dependencies, tests, screenshots and local state. The Windows npm packaging command clears only its child process's inherited `PSModulePath`, allowing Windows PowerShell to resolve its own modules when called through npm from PowerShell 7. This addresses Microsoft's [documented module-path inheritance behavior](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath).
 
 Inspect extracted contents before sharing. Keep visibility private until #6 is accepted and public publication is explicitly authorized. History rewrites or credential rotation require an exact remediation plan; never copy sensitive values into tracking comments.
+
+`thumbnail.jpg` and `preview.gif` are reviewed runtime assets, generated with `npm run thumbnail` using Edge and the development-only `gifenc` encoder. The renderer uses a seeded Sage preview with higher line contrast for a readable small tile; these preview settings do not change wallpaper defaults. The GIF loops forward and backward at half the original preview playback speed. Lively plays it automatically in normal library mode and uses the still image in lite mode.
+
+Lively's automatic capture belongs to interactive import and is unavailable to this folder-copy setup. Its private bundled image assemblies are not a supported standalone build API. The small generator uses an established JavaScript encoder so regeneration does not depend on an installed Lively directory or another system tool. Regenerate and visually review both assets after material visual changes. Native desktop captures stay ignored and are never included in the package.
 
 ## Host selection
 

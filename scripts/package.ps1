@@ -7,7 +7,7 @@ $manifest = Join-Path $root 'wallpaper-files.json'
 $files = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
 $files += @('wallpaper-files.json', 'install.ps1', 'README.md', 'OPERATIONS.md')
 $paths = foreach ($file in $files) {
-    if ($file -notmatch '^[A-Za-z0-9-]+\.(html|css|js|json|ps1|md)$') { throw 'Package entries must be root filenames.' }
+    if ($file -notmatch '^[A-Za-z0-9-]+\.(html|css|js|json|jpg|gif|ps1|md)$') { throw 'Package entries must be root filenames.' }
     $path = Join-Path $root $file
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Package file is missing: $file" }
     if ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Package source must not be a link: $file" }

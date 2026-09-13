@@ -5,5 +5,7 @@
   "grid-wallpaper.js",
   "grid-settings.js",
   "LivelyProperties.json",
-  "LivelyInfo.json"
+  "LivelyInfo.json",
+  "thumbnail.jpg",
+  "preview.gif"
 ]

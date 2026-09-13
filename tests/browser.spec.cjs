@@ -102,3 +102,60 @@ test('reduced-motion first run freezes and blocked storage remains usable', asyn
   await page.evaluate(() => GridWallpaper.update({ count: 2 }));
   expect(await page.evaluate(() => GridWallpaper.getConfig().count)).toBe(2);
 });
+
+for (const display of [
+  { name: 'primary display', x: 0, y: 0, width: 1280, height: 800, workHeight: 752, scale: 1 },
+  { name: 'scaled display with negative origin', x: -1536, y: -120, width: 1536, height: 960, workHeight: 900, scale: 1.2 }
+]) {
+  test(`settings clear the taskbar on ${display.name}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.evaluate(display => {
+      for (const [key, value] of Object.entries({ width: display.width, height: display.height,
+        availLeft: display.x, availTop: display.y, availWidth: display.width, availHeight: display.workHeight })) {
+        Object.defineProperty(screen, key, { configurable: true, value });
+      }
+      for (const [key, value] of Object.entries({ screenX: display.x, screenY: display.y,
+        outerWidth: display.width, outerHeight: display.height })) {
+        Object.defineProperty(window, key, { configurable: true, value });
+      }
+      livelyPropertyListener('count', 5);
+    }, display);
+    const bottom = display.workHeight / display.scale;
+    const menu = page.locator('#hamburger');
+    await menu.click();
+    await page.getByRole('button', { name: 'Expand all sections' }).click();
+    const panel = await page.locator('#panel').boundingBox();
+    expect(panel.y + panel.height).toBeLessThanOrEqual(bottom - 16 + 0.1);
+    await page.keyboard.press('Escape');
+    const button = await menu.boundingBox();
+    await page.mouse.move(button.x + 24, button.y + 24);
+    await page.mouse.down(); await page.mouse.move(1260, 790, { steps: 6 }); await page.mouse.up();
+    const moved = await menu.boundingBox();
+    expect(moved.y + moved.height).toBeLessThanOrEqual(bottom - 16 + 0.1);
+    await menu.click();
+    const above = await page.locator('#panel').boundingBox();
+    expect(above.y + above.height).toBeLessThanOrEqual(moved.y - 12 + 0.1);
+    await page.screenshot({ path: info.outputPath('taskbar-clearance.png') });
+  });
+}
+
+test('settings opening and closing have press feedback without shrinking the hit area', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.evaluate(() => {
+    const icon = document.querySelector('#hamburger svg');
+    window.pressRecords = [];
+    const animate = icon.animate.bind(icon);
+    icon.animate = (...args) => { window.pressRecords.push(args); return animate(...args); };
+  });
+  const menu = page.locator('#hamburger');
+  await menu.click();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Close grid settings', exact: true }).last().click();
+  expect(await page.evaluate(() => window.pressRecords.length)).toBe(4);
+  expect(await menu.evaluate(button => button.offsetWidth)).toBe(48);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await menu.click(); await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => window.pressRecords.length)).toBe(4);
+  expect(await menu.locator('svg').evaluate(icon => icon.getAnimations().length)).toBe(0);
+});

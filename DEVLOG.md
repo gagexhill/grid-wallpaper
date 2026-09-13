@@ -7,3 +7,5 @@
 - Replaced fake loading and value-changing slider animations with native accessible controls; browser storage is validated and Lively Customize owns persistent desktop settings.
 - Selected Lively after checking native Windows, Lively and Wallpaper Engine capabilities. The native CLI's project-library constraint requires a small allowlisted install adapter; its replacement condition and current procedures are in OPERATIONS.md.
 - Local validation and native GitHub issue evidence replace unapproved hosted execution. Public-release review is a separate gate; private development does not authorize a visibility change.
+- Native setup exposed partial first-launch settings and cached library tiles. Setup now waits for the configured library before copying and refreshes the native library window after metadata changes. A rendered thumbnail and concise description identify the wallpaper in Lively.
+- Settings placement uses the host display work area with a 16 px gap around system UI. Opening and closing animates the settings glyph while preserving the control hit area and reduced-motion behavior.

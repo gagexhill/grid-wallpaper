@@ -1,7 +1,7 @@
 {
   "AppVersion": "2.2.1.0",
   "Title": "Grid Wallpaper",
-  "Desc": "An interactive animated grid with wandering domes, color themes, and adjustable motion.",
+  "Desc": "Animated grid with interactive distortions.",
   "Author": "Ventryn LLC",
   "License": null,
   "Contact": "https://github.com/gagexhill/grid-wallpaper",
@@ -9,8 +9,8 @@
   "FileName": "grid-wallpaper.html",
   "Arguments": "--pause-event true",
   "IsAbsolutePath": false,
-  "Thumbnail": null,
-  "Preview": null,
+  "Thumbnail": "thumbnail.jpg",
+  "Preview": "preview.gif",
   "Id": null,
   "Tags": ["grid", "interactive", "abstract"],
   "Version": 1

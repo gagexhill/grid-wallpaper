@@ -26,6 +26,7 @@ From a source checkout on Windows, use Node.js 22 or newer and Microsoft Edge, t
 npm ci
 npm run check
 npm run test:browser
+npm run test:install
 npm run package
 ```
 
