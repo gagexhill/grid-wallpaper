@@ -9,7 +9,7 @@ if ($env:OS -ne 'Windows_NT') { throw 'Installer regression checks require Windo
 $repositoryDirectory = Split-Path $PSScriptRoot -Parent
 $installerPath = Join-Path $repositoryDirectory 'install.ps1'
 $runtimeNames = Get-Content -LiteralPath (Join-Path $repositoryDirectory 'wallpaper-files.json') -Raw | ConvertFrom-Json
-$metadataText = Get-Content -LiteralPath (Join-Path $repositoryDirectory 'LivelyInfo.json') -Raw
+$metadataText = Get-Content -LiteralPath (Join-Path $repositoryDirectory 'wallpaper\LivelyInfo.json') -Raw
 $metadata = $metadataText | ConvertFrom-Json
 $fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
 $fixtureName = 'grid-wallpaper-install-test-' + [Guid]::NewGuid().ToString('N')
@@ -23,7 +23,9 @@ $registryStartupName = 'WarmStart-' + $registryFixtureId
 $registryStartupSiblingName = 'UnrelatedFixtureStartup'
 $registryFixturesReserved = $false
 $configJunctionPath = Join-Path $fixtureDirectory 'linked-host-config\windows-host.json'
+$sourceJunctionPath = Join-Path $fixtureDirectory 'flat-release\wallpaper'
 $module = $null
+$flatModule = $null
 $assertionCount = 0
 
 function Assert-Check([bool]$Condition, [string]$Message) {
@@ -54,6 +56,7 @@ try {
     $registryFixturesReserved = $true
     $null = [IO.Directory]::CreateDirectory($fixtureDirectory)
     $packageDirectory = Join-Path $fixtureDirectory 'package'
+    $wallpaperSourceDirectory = Join-Path $packageDirectory 'wallpaper'
     $hostBuildDirectory = Join-Path $packageDirectory 'dist\settings-host'
     $normalDataDirectory = Join-Path $fixtureDirectory 'normal-data'
     $storeDataDirectory = Join-Path $fixtureDirectory 'store-data'
@@ -91,10 +94,10 @@ try {
     $modulePath = Join-Path $packageDirectory 'installer-fixture.psm1'
     Write-Fixture $modulePath $moduleText
     foreach ($runtimeName in $runtimeNames) {
-        $sourceDirectory = if ($runtimeName -match '\.(exe|dll)$') { $hostBuildDirectory } else { $packageDirectory }
+        $sourceDirectory = if ($runtimeName -match '\.(exe|dll|txt)$') { $hostBuildDirectory } else { $wallpaperSourceDirectory }
         Write-Fixture (Join-Path $sourceDirectory $runtimeName) ('fixture: ' + $runtimeName)
     }
-    Write-Fixture (Join-Path $packageDirectory 'LivelyInfo.json') $metadataText
+    Write-Fixture (Join-Path $wallpaperSourceDirectory 'LivelyInfo.json') $metadataText
     Write-Fixture (Join-Path $packageDirectory 'unlisted-note.txt') 'This must never be copied.'
     Write-Fixture (Join-Path $packageDirectory 'windows-host.json') '{"localOnly":"must not be copied"}'
     Write-Fixture (Join-Path $packageDirectory 'windows-telemetry.js') 'installed-session fixture: must not be copied'
@@ -107,11 +110,21 @@ try {
     Assert-Check ((Get-LivelyUiPath $storeInstallation) -ceq (Join-Path $fixtureDirectory 'store package\Lively.UI.WinUI.exe')) 'Store library refresh must identify the UI beside its core directory.'
     Assert-Check ($runtimeNames -contains 'grid-settings.exe') 'The runtime manifest must include the native settings host.'
     Assert-Check (@($runtimeNames | Where-Object { $_ -match '\.dll$' }).Count -gt 0) 'The runtime manifest must include native host dependencies.'
+    foreach ($runtimeName in $runtimeNames) {
+        $expectedSourceDirectory = if ($runtimeName -match '\.(exe|dll|txt)$') { $hostBuildDirectory } else { $wallpaperSourceDirectory }
+        Assert-Check ((Get-RuntimeSource $runtimeName) -ceq (Join-Path $expectedSourceDirectory $runtimeName)) ('Organized checkout runtime source differs: ' + $runtimeName)
+    }
     Assert-Check ((Get-RuntimeSource 'grid-settings.exe') -ceq (Join-Path $hostBuildDirectory 'grid-settings.exe')) 'Source checkouts must resolve built native files under dist/settings-host.'
     $rootHostSource = Join-Path $packageDirectory 'grid-settings.exe'
     Write-Fixture $rootHostSource 'package-root host fixture'
     Assert-Check ((Get-RuntimeSource 'grid-settings.exe') -ceq $rootHostSource) 'Extracted package files must take precedence over development build output.'
+    Remove-Item -LiteralPath $rootHostSource
+    $rootWebSource = Join-Path $packageDirectory 'grid-wallpaper.html'
+    Write-Fixture $rootWebSource 'package-root web fixture'
+    Assert-Check ((Get-RuntimeSource 'grid-wallpaper.html') -ceq $rootWebSource) 'Flat runtime files must take precedence over organized wallpaper sources.'
+    Remove-Item -LiteralPath $rootWebSource
     Assert-Fails { Get-RuntimeSource 'missing-fixture.dll' } 'Missing runtime dependencies must fail clearly.' 'package is incomplete'
+    Assert-Fails { Get-RuntimeSource 'missing-fixture.html' } 'Missing organized wallpaper files must fail clearly.' 'package is incomplete'
     Assert-Check ($runtimeNames -notcontains 'windows-host.json') 'Machine-specific host configuration must never enter the runtime allowlist.'
     Assert-Check ($runtimeNames -notcontains 'windows-telemetry.js') 'Session telemetry configuration must never enter the runtime allowlist.'
     $packageAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryDirectory 'scripts\package.ps1'), [ref]$parseTokens, [ref]$parseErrors)
@@ -179,11 +192,55 @@ try {
     }
     Write-Output 'PASS allowlisted and verified runtime installation'
 
+    $flatReleaseDirectory = Join-Path $fixtureDirectory 'flat-release'
+    $flatModulePath = Join-Path $flatReleaseDirectory 'flat-installer-fixture.psm1'
+    Write-Fixture $flatModulePath $moduleText
+    foreach ($runtimeName in $runtimeNames) {
+        Write-Fixture (Join-Path $flatReleaseDirectory $runtimeName) ('flat release fixture: ' + $runtimeName)
+    }
+    $flatPackageOnlyNames = @('wallpaper-files.json', 'install.ps1', 'README.md', 'OPERATIONS.md')
+    foreach ($packageOnlyName in $flatPackageOnlyNames) {
+        Write-Fixture (Join-Path $flatReleaseDirectory $packageOnlyName) ('package-only fixture: ' + $packageOnlyName)
+    }
+    Write-Fixture (Join-Path $flatReleaseDirectory 'LivelyInfo.json') $metadataText
+    Write-Fixture (Join-Path $flatReleaseDirectory 'unlisted-note.txt') 'This flat-release note must never be installed.'
+    Write-Fixture (Join-Path $flatReleaseDirectory 'windows-host.json') '{"localOnly":"must not be copied"}'
+    Write-Fixture (Join-Path $flatReleaseDirectory 'windows-telemetry.js') 'installed-session fixture: must not be copied'
+    $flatModule = Import-Module -Name $flatModulePath -PassThru -Force -DisableNameChecking -Prefix FlatFixture
+    $flatDestination = Join-Path $fixtureDirectory 'flat-installation'
+    Copy-FlatFixtureRuntime $flatDestination
+    Assert-FlatFixtureDestination $flatDestination $metadata
+    $flatInstalledNames = @(Get-ChildItem -LiteralPath $flatDestination -File | Select-Object -ExpandProperty Name)
+    Assert-Check ($flatInstalledNames.Count -eq $runtimeNames.Count) 'Flat releases must install only the runtime manifest.'
+    Assert-Check (@(Get-ChildItem -LiteralPath $flatDestination -Directory).Count -eq 0) 'Installed runtime assets must remain flat.'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $flatReleaseDirectory 'wallpaper'))) 'The flat release fixture must not depend on the source wallpaper directory.'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $flatReleaseDirectory 'dist'))) 'The flat release fixture must not depend on development build output.'
+    foreach ($runtimeName in $runtimeNames) {
+        $flatSource = Get-FlatFixtureRuntimeSource $runtimeName
+        Assert-Check ($flatSource -ceq (Join-Path $flatReleaseDirectory $runtimeName)) ('Flat release runtime source differs: ' + $runtimeName)
+        Assert-Check ((Get-FileHash -LiteralPath (Join-Path $flatDestination $runtimeName)).Hash -ceq
+            (Get-FileHash -LiteralPath $flatSource).Hash) ('Installed flat release bytes differ: ' + $runtimeName)
+    }
+    foreach ($excludedName in ($flatPackageOnlyNames + @('unlisted-note.txt', 'flat-installer-fixture.psm1', 'windows-host.json', 'windows-telemetry.js'))) {
+        Assert-Check (-not (Test-Path -LiteralPath (Join-Path $flatDestination $excludedName))) ('Flat releases must exclude local or unlisted files: ' + $excludedName)
+    }
+    Assert-Check ((Get-RuntimeSource 'grid-wallpaper.html') -ceq (Join-Path $wallpaperSourceDirectory 'grid-wallpaper.html')) 'Flat release fixtures must not replace the organized checkout helpers.'
+    Write-Output 'PASS flat release installation without source directories or local configuration'
+
+    $linkedRuntimePath = Join-Path $wallpaperSourceDirectory 'linked-only.html'
+    Write-Fixture $linkedRuntimePath 'preserve linked runtime content'
+    $null = New-Item -ItemType Junction -Path $sourceJunctionPath -Target $wallpaperSourceDirectory
+    Assert-Check ([bool]((Get-Item -LiteralPath $sourceJunctionPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'The source fixture must be an actual wallpaper directory junction.'
+    Assert-Fails { Get-FlatFixtureRuntimeSource 'linked-only.html' } 'Source fallback must reject wallpaper directory links.' 'source directories must not be links'
+    Assert-Check ((Get-FlatFixtureRuntimeSource 'grid-wallpaper.html') -ceq (Join-Path $flatReleaseDirectory 'grid-wallpaper.html')) 'Complete flat releases must resolve their own files before consulting source directories.'
+    Assert-Check ((Get-Content -LiteralPath $linkedRuntimePath -Raw) -ceq 'preserve linked runtime content') 'Rejected source links must preserve their targets.'
+    Write-Output 'PASS linked source directory rejection and flat release precedence'
+
     $savedSettingsPath = Join-Path $customLibrary 'SaveData\wpdata\grid-wallpaper\settings.json'
     Write-Fixture $savedSettingsPath '{"preserved":true}'
     $existingExtraPath = Join-Path $expectedCustomDestination 'existing-note.txt'
     Write-Fixture $existingExtraPath 'preserve existing unrelated data'
-    Write-Fixture (Join-Path $packageDirectory $runtimeNames[0]) 'updated runtime fixture'
+    Write-Fixture (Get-RuntimeSource $runtimeNames[0]) 'updated runtime fixture'
     Copy-Runtime $expectedCustomDestination
     Assert-Destination $expectedCustomDestination $metadata
     Assert-Check ((Get-Content -LiteralPath (Join-Path $expectedCustomDestination $runtimeNames[0]) -Raw) -ceq 'updated runtime fixture') 'Repeat installation must update runtime content.'
@@ -323,6 +380,7 @@ try {
 
     Write-Output ('Installer regression checks passed: ' + $assertionCount + ' assertions. Only isolated temporary files and GUID-owned test registrations were used.')
 } finally {
+    if ($flatModule) { Remove-Module -ModuleInfo $flatModule -Force }
     if ($module) { Remove-Module -ModuleInfo $module -Force }
     if ($registryFixturesReserved) {
         foreach ($registryPath in @($registryFixtureKey, $registrySiblingKey, $registryStartupKey)) {
@@ -340,15 +398,19 @@ try {
             Remove-Item -LiteralPath $registryPath -Recurse -Force
         }
     }
-    if (Test-Path -LiteralPath $configJunctionPath) {
-        $junctionItem = Get-Item -LiteralPath $configJunctionPath -Force
-        $expectedJunctionPath = Join-Path (Join-Path $fixtureParent $fixtureName) 'linked-host-config\windows-host.json'
+    foreach ($junctionFixture in @(
+        @{ Path = $configJunctionPath; Relative = 'linked-host-config\windows-host.json' },
+        @{ Path = $sourceJunctionPath; Relative = 'flat-release\wallpaper' }
+    )) {
+        if (-not (Test-Path -LiteralPath $junctionFixture.Path)) { continue }
+        $junctionItem = Get-Item -LiteralPath $junctionFixture.Path -Force
+        $expectedJunctionPath = Join-Path (Join-Path $fixtureParent $fixtureName) $junctionFixture.Relative
         if ([IO.Path]::GetFullPath($junctionItem.FullName) -cne [IO.Path]::GetFullPath($expectedJunctionPath) -or
             -not $junctionItem.FullName.StartsWith($fixtureDirectory + '\', [StringComparison]::OrdinalIgnoreCase) -or
             -not ($junctionItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             throw 'Refusing to clean a junction outside the exact test fixture path.'
         }
-        [IO.Directory]::Delete($configJunctionPath)
+        [IO.Directory]::Delete($junctionFixture.Path)
     }
     if (Test-Path -LiteralPath $fixtureDirectory) {
         $resolvedFixture = Get-Item -LiteralPath $fixtureDirectory -Force

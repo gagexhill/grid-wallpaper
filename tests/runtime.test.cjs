@@ -6,7 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const root = path.resolve(__dirname, '..');
+const root = path.resolve(__dirname, '../wallpaper');
 const sources = ['grid-config.js', 'grid-wallpaper.js'].map(name => ({
   name,
   source: fs.readFileSync(path.join(root, name), 'utf8')

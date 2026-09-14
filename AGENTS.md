@@ -1,8 +1,9 @@
 # Grid Wallpaper
 
 - This repository owns the offline Canvas runtime and Windows installation package. It must run without adjacent checkouts, personal tooling, a separately configured server or Node.js on the receiving laptop.
-- `grid-config.js` owns defaults, numeric limits, presets and the settings link. `LivelyProperties.json` and `windows-integration.json` are generated metadata: run `npm run generate` and validate parity instead of editing them directly.
-- `grid-wallpaper.js` owns simulation, rendering, validated browser persistence and Lively callbacks. `grid-settings.js` and `grid-wallpaper.css` own the settings UI.
+- `wallpaper/` owns the browser runtime, Lively metadata and preview assets. Keep the release ZIP and installed Lively folder flat; source organization must not change native resource names or require development tools on the receiving laptop.
+- `wallpaper/grid-config.js` owns defaults, numeric limits, presets and the settings link. Its sibling `LivelyProperties.json` and `windows-integration.json` are generated metadata: run `npm run generate` and validate parity instead of editing them directly.
+- `wallpaper/grid-wallpaper.js` owns simulation, rendering, validated browser persistence and Lively callbacks. Its sibling `grid-settings.js` and `grid-wallpaper.css` own the settings UI.
 - Preserve that custom panel on the desktop. `windows/settings-window.cs` hosts the same HTML above desktop shortcuts, anchors its top-right corner to the settings button's center within the display work area, and clips the native window to the CSS corner radius. Do not replace the panel with Lively's generated editor.
 - Opening and closing must be responsive. The native launcher owns desktop mouse capture and toggles the warmed panel directly. Its appearance comes from the existing CSS and SVG through `grid-native-settings.js`; browser preview retains its inline button. Do not depend on wallpaper-forwarded input for desktop dragging or launch a URI-handler process for each normal click.
 - Keep the open panel attached while dragging its launcher, including edge snapping. Outside activation dismisses the panel; the launcher, panel controls and owned popups remain one interaction group. Preserve decorative control motion with immediate input and reduced-motion support.

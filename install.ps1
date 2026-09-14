@@ -33,14 +33,16 @@ foreach ($file in $runtimeFiles) {
 }
 $packageId = 'rocksdanister.LivelyWallpaper'
 $normalDataDirectory = Join-Path $env:LOCALAPPDATA 'Lively Wallpaper'
-$integration = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows-integration.json') -Raw | ConvertFrom-Json
-if ($integration.settingsUri -notmatch '^[a-z][a-z0-9-]{2,50}:$') { throw 'Invalid settings link metadata.' }
-$settingsKey = 'HKCU:\Software\Classes\' + $integration.settingsUri.TrimEnd(':')
-$startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$startupName = 'GridWallpaperSettings'
-
 function Get-RuntimeSource($File) {
     $sourcePath = Join-Path $PSScriptRoot $File
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+        $sourceDirectory = Join-Path $PSScriptRoot 'wallpaper'
+        if ((Test-Path -LiteralPath $sourceDirectory) -and
+            ((Get-Item -LiteralPath $sourceDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Runtime source directories must not be links.'
+        }
+        $sourcePath = Join-Path $sourceDirectory $File
+    }
     if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
         $sourcePath = Join-Path (Join-Path $PSScriptRoot 'dist\settings-host') $File
     }
@@ -48,6 +50,12 @@ function Get-RuntimeSource($File) {
     if ((Get-Item -LiteralPath $sourcePath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Runtime sources must be regular files: $File" }
     return $sourcePath
 }
+
+$integration = Get-Content -LiteralPath (Get-RuntimeSource 'windows-integration.json') -Raw | ConvertFrom-Json
+if ($integration.settingsUri -notmatch '^[a-z][a-z0-9-]{2,50}:$') { throw 'Invalid settings link metadata.' }
+$settingsKey = 'HKCU:\Software\Classes\' + $integration.settingsUri.TrimEnd(':')
+$startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$startupName = 'GridWallpaperSettings'
 
 function Assert-SettingsLink {
     if (Test-Path -LiteralPath $settingsKey) {
@@ -303,8 +311,8 @@ try {
     foreach ($file in $runtimeFiles) {
         $null = Get-RuntimeSource $file
     }
-    $metadata = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LivelyInfo.json') -Raw | ConvertFrom-Json
-    $null = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'LivelyProperties.json') -Raw | ConvertFrom-Json
+    $metadata = Get-Content -LiteralPath (Get-RuntimeSource 'LivelyInfo.json') -Raw | ConvertFrom-Json
+    $null = Get-Content -LiteralPath (Get-RuntimeSource 'LivelyProperties.json') -Raw | ConvertFrom-Json
     $lively = Find-Lively
     $state = Get-LivelyState $lively -AllowInitializing
     if ($Preview) {
@@ -371,7 +379,7 @@ try {
         if (-not $file) { continue }
         $installed = Join-Path $state.Destination $file
         if (-not (Test-Path -LiteralPath $installed -PathType Leaf) -or
-            (Get-FileHash -LiteralPath $installed).Hash -cne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $file)).Hash) {
+            (Get-FileHash -LiteralPath $installed).Hash -cne (Get-FileHash -LiteralPath (Get-RuntimeSource $file)).Hash) {
             $refreshLibrary = $true
         }
     }

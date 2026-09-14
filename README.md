@@ -1,32 +1,36 @@
 # Grid Wallpaper
 
-An offline animated grid with wandering distortions, mouse interaction, eight color themes and adjustable motion. Windows desktop playback uses Lively Wallpaper. Browser preview works by opening `grid-wallpaper.html` directly.
+An offline animated grid for Windows, with wandering domes, mouse interaction, eight color themes and responsive desktop controls. Powered by [Lively Wallpaper](https://www.rocksdanister.com/lively/).
+
+![Animated Grid Wallpaper preview](https://github.com/gagexhill/grid-wallpaper/blob/main/wallpaper/preview.gif?raw=true)
 
 ## Install on Windows
 
-Download and extract the Grid Wallpaper package, open PowerShell in that folder, then run:
+1. Open [Releases](https://github.com/gagexhill/grid-wallpaper/releases) and download **grid-wallpaper-windows.zip** from the newest preview. The automatically generated **Source code** archives are for development.
+2. Extract the ZIP and open PowerShell in the extracted folder.
+3. Run:
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-```
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+   ```
 
-This uses Windows Package Manager to install Lively if needed, copies the wallpaper into its native library, and requests activation. Complete Lively's first-run setup if prompted, then rerun the same command. No Git, Node.js, developer setup, account for the wallpaper, or server configuration is required. Internet is needed only to obtain the package and any missing Lively prerequisites.
+Setup installs Lively through Windows Package Manager if needed, verifies the wallpaper files and opens the wallpaper. Complete Lively's first-run wizard if prompted, then rerun the command. No Git, Node.js, wallpaper account or server setup is required. Internet is needed only for downloads and missing prerequisites; the wallpaper itself runs offline.
 
-For a read-only plan, add `-Preview`. Existing Lively installations and custom library locations are supported. See [operations](OPERATIONS.md) for troubleshooting, updates and removal.
+The release includes a SHA256 checksum for the ZIP. Add `-Preview` to the installation command for a read-only setup check. To update, extract a newer release and run the same command; saved customization is preserved. See [OPERATIONS.md](OPERATIONS.md) for troubleshooting, removal and rollback.
 
-Click the grid's settings button to open its custom panel above desktop shortcuts. Its top-right corner meets the button's center, with placement kept clear of the taskbar. Click the button again, use the close control, or press Escape to hide it. Changes save through Lively. In a normal browser, the same panel saves locally when browser storage is available. Lively owns start at sign-in and pause-on-battery behavior.
+## Make it yours
 
-Setup warms the settings panel so the button opens it directly. While hidden, it finishes pending saves and suspends the embedded browser. A per-user startup entry prepares it after sign-in when Lively is running; it does not start Lively or change Lively's startup preference. When Lively exits, the browser and button close; a small helper waits for Lively to return.
+Click the grid button to open the custom settings panel above desktop shortcuts. Dragging the button moves an open panel with it. Click outside, click the button again, or press Escape to close. Controls save through Lively, and decorative animations respect reduced-motion preferences.
 
-The desktop panel supports the primary display with Lively's default WebView2 player and per-screen layout. For other display arrangements or the optional Chromium player, use Lively's **Customize wallpaper** command. The Windows package targets x64 Windows 10/11.
+Choose a color theme, tune grid and dome motion, enable mouse effects, or freeze a frame. Automatic dome-size sliders show live values; focus a slider to edit its base size, then move focus away to resume the live readout. Lowering the frame limit reduces rendering work without changing animation speed. Lively owns startup, fullscreen and battery playback policies.
 
-The default frame limit is 30 fps. Animation speed stays the same when you lower the frame limit. Freeze Frame preserves the image and still redraws when settings or display dimensions change.
+The Windows package supports **x64 Windows 10/11**, Lively's default **WebView2** player, and its **per-screen layout on the primary display**. Use Lively's native Customize command for other arrangements or the optional Chromium player. Browser preview is available by opening `grid-wallpaper.html` in the extracted installation package.
 
-With automatic dome sizing enabled, the dome sliders show current sizes. Focus a slider to edit its base size; move focus away to resume its live readout. The desktop readout uses a private connection within this computer and sends no data to the internet.
+Builds are currently previews. Remaining restart, sleep, power and display-transition acceptance is tracked in [#1](https://github.com/gagexhill/grid-wallpaper/issues/1); browser tests do not establish those device behaviors.
 
-## Develop and validate
+## Develop
 
-From a source checkout on Windows, use Node.js 22 or newer and Microsoft Edge, then:
+Use Node.js 22 or newer and Microsoft Edge on Windows. From a source checkout:
 
 ```powershell
 npm ci
@@ -36,4 +40,14 @@ npm run test:install
 npm run package
 ```
 
-Only development checks require npm. Packaging compiles the small settings window using Windows' .NET Framework compiler and a pinned official WebView2 SDK; its first build needs internet access. Runtime defaults and presets live in `grid-config.js`; the renderer, settings UI and installation each have one source owner. In a source checkout, `AGENTS.md` provides editing guidance. See [OPERATIONS.md](OPERATIONS.md) for release evidence.
+Open `wallpaper/grid-wallpaper.html` for source preview. Packaging builds the native settings helper using Windows' .NET Framework compiler and a pinned official WebView2 SDK; its first build downloads that SDK. The ready-to-install ZIP and checksum are written to `dist/`.
+
+| Location | Purpose |
+|---|---|
+| `wallpaper/` | Browser runtime, canonical settings, Lively metadata and preview assets |
+| `windows/` | Native desktop settings host and local telemetry |
+| `scripts/` | Metadata generation, previews, native build and packaging |
+| `tests/` | Runtime, browser and installer checks |
+| `install.ps1` / `wallpaper-files.json` | Setup entry point and distribution allowlist |
+
+The installed package stays flat; the source folders are only for development. [OPERATIONS.md](OPERATIONS.md) owns validation and release procedures; `AGENTS.md` contains source-editing guidance.

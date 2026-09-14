@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaults, schema, fpsOptions, mouseModes, hostSettings, domePulse } = require('../grid-config.js');
+const { defaults, schema, fpsOptions, mouseModes, hostSettings, domePulse } = require('../wallpaper/grid-config.js');
 // Lively requires this native JSON; generate it from the browser's canonical configuration.
 const properties = {
   instructions: { type: 'label', value: 'Changes to these controls are saved automatically by Lively.' }
@@ -25,7 +25,7 @@ for (const [key, value] of Object.entries(defaults)) {
 }
 const integration = { ...hostSettings, domeTelemetry: { domeSize: schema.domeSize, pulse: domePulse, maximumCount: schema.count.max } };
 for (const [name, value] of Object.entries({ 'LivelyProperties.json': properties, 'windows-integration.json': integration })) {
-  const target = path.join(__dirname, '..', name);
+  const target = path.join(__dirname, '..', 'wallpaper', name);
   const output = JSON.stringify(value, null, 2) + '\n';
   if (process.argv.includes('--check')) {
     if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n') !== output) {
