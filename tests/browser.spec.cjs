@@ -133,6 +133,49 @@ test('inline drag cancellation and lost mouse release never resume on hover', as
   expect(results.every(result => result.stopped && !result.dragging)).toBe(true);
 });
 
+test('open panel follows its button during drag and snapping, then dismisses outside', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 1200 });
+  const menu = page.locator('#hamburger');
+  const panel = page.locator('#panel');
+  await menu.click();
+  await page.locator('details').evaluateAll(sections => sections.forEach(section => { section.open = false; }));
+  const start = await menu.boundingBox();
+  await page.mouse.move(start.x + 24, start.y + 24);
+  await page.mouse.down();
+  await page.mouse.move(900, 200);
+  const moving = await panel.boundingBox();
+  expect(moving.x + moving.width).toBeCloseTo(900, 0);
+  expect(moving.y).toBeCloseTo(200, 0);
+  await page.mouse.up();
+  await expect(panel).toBeVisible();
+  const snappedButton = await menu.boundingBox();
+  const snappedPanel = await panel.boundingBox();
+  expect(snappedPanel.x + snappedPanel.width).toBeCloseTo(snappedButton.x + 24, 0);
+  await page.mouse.click(600, 10);
+  await expect(panel).toBeHidden();
+});
+
+test('settings motion preserves immediate values and respects reduced motion', async ({ page }, info) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.locator('#hamburger').click();
+  await page.getByRole('button', { name: 'Expand all sections' }).click();
+  await expect(page.locator('#setting-vignette')).toBeChecked();
+  await page.locator('#setting-vignette').uncheck();
+  expect(await page.evaluate(() => GridWallpaper.getConfig().vignette)).toBe(false);
+  expect(await page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0.14s, 0.14s');
+  await page.locator('#setting-sizeScale').focus();
+  await page.keyboard.press('ArrowRight');
+  expect(await page.locator('#setting-sizeScale').inputValue()).toBe('1.05');
+  expect(await page.evaluate(() => GridWallpaper.getConfig().sizeScale)).toBe(1.05);
+  await page.getByRole('button', { name: 'Reset all', exact: true }).click();
+  await expect(page.locator('#setting-vignette')).toBeChecked();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0s');
+  expect(await page.locator('#dome-controls').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+  await page.locator('#panel').evaluate(node => { node.scrollTop = 0; });
+  await page.screenshot({ path: info.outputPath('restored-settings-motion.png') });
+});
+
 test('reduced-motion first run freezes and blocked storage remains usable', async ({ page, context }) => {
   await context.clearCookies();
   await page.evaluate(() => localStorage.clear());
@@ -178,7 +221,8 @@ for (const display of [
     expect(moved.y + moved.height).toBeLessThanOrEqual(bottom - 16 + 0.1);
     await menu.click();
     const above = await page.locator('#panel').boundingBox();
-    expect(above.y + above.height).toBeLessThanOrEqual(moved.y - 12 + 0.1);
+    expect(above.y + above.height).toBeLessThanOrEqual(bottom - 16 + 0.1);
+    expect(above.y).toBeGreaterThanOrEqual(16);
     await page.screenshot({ path: info.outputPath('taskbar-clearance.png') });
   });
 }

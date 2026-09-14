@@ -92,7 +92,7 @@
   "vignette": {
     "type": "checkbox",
     "text": "Vignette",
-    "value": false
+    "value": true
   },
   "snapshot": {
     "type": "checkbox",
