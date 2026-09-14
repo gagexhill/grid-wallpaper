@@ -9,7 +9,8 @@ $runtimeFiles = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
 $files = $runtimeFiles + @('wallpaper-files.json', 'install.ps1', 'README.md', 'OPERATIONS.md')
 $paths = foreach ($file in $files) {
     if ($file -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.(html|css|js|json|jpg|gif|ps1|md|exe|dll|txt)$') { throw 'Package entries must be root filenames.' }
-    $sourceDirectory = if ($file -in $runtimeFiles -and $file -match '\.(exe|dll|txt)$') { Join-Path $root 'dist\settings-host' }
+    $sourceDirectory = if ($file -eq 'LICENSE.txt') { $root }
+        elseif ($file -in $runtimeFiles -and $file -match '\.(exe|dll|txt)$') { Join-Path $root 'dist\settings-host' }
         elseif ($file -in $runtimeFiles) { Join-Path $root 'wallpaper' }
         else { $root }
     if ((Get-Item -LiteralPath $sourceDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Package source directories must not be links.' }

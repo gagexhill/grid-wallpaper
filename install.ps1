@@ -244,10 +244,18 @@ function Assert-Destination($Destination, $Metadata) {
         throw "The target contains files without Grid Wallpaper metadata. Nothing was overwritten: $Destination"
     }
     $installedMetadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
-    foreach ($field in @('Title', 'Author', 'FileName')) {
+    foreach ($field in @('Title', 'FileName')) {
         if (-not $installedMetadata.PSObject.Properties[$field] -or $installedMetadata.$field -cne $Metadata.$field) {
             throw "A different wallpaper occupies the target. Nothing was overwritten: $Destination"
         }
+    }
+    $legacyCredit = $installedMetadata.PSObject.Properties['Author'] -and
+        $installedMetadata.Author -ceq 'Ventryn LLC' -and $Metadata.Author -ceq 'gagexhill' -and
+        $installedMetadata.PSObject.Properties['Contact'] -and $Metadata.PSObject.Properties['Contact'] -and
+        $Metadata.Contact -and $installedMetadata.Contact -ceq $Metadata.Contact
+    if (-not $installedMetadata.PSObject.Properties['Author'] -or
+        ($installedMetadata.Author -cne $Metadata.Author -and -not $legacyCredit)) {
+        throw "A different wallpaper occupies the target. Nothing was overwritten: $Destination"
     }
 }
 
