@@ -1118,8 +1118,9 @@ internal sealed class SettingsData
         }
         if (!SamePath(RequiredPath(new Dictionary<string, object> { { "path", Path.GetTempPath() } }, "path"), Path.GetTempPath())) return 10;
         if (NativeSliderArgument("1.7", new CultureInfo("fr-FR")) != "1,7" || NativeSliderArgument("1.7", CultureInfo.InvariantCulture) != "1.7") return 11;
-        Uri document = new Uri("file:///C:/Grid%20Wallpaper/grid-wallpaper.html?settings-window");
-        if (document.LocalPath != @"C:\Grid Wallpaper\grid-wallpaper.html" || document.Query != "?settings-window") return 12;
+        Uri document = new Uri(@"C:\Grid Wallpaper\grid-wallpaper.html");
+        if (document.AbsoluteUri != "file:///C:/Grid%20Wallpaper/grid-wallpaper.html"
+            || document.LocalPath != @"C:\Grid Wallpaper\grid-wallpaper.html" || document.Query.Length != 0) return 12;
         return 0;
     }
 }
@@ -1211,16 +1212,6 @@ internal sealed class SettingsWindow : Form
     protected override void WndProc(ref Message message)
     {
         if (message.Msg == 0x10 && shutdown != null && shutdown.WaitOne(0)) shuttingDown = true;
-        if (message.Msg == SettingsProgram.OpenMessage)
-        {
-            long x = message.WParam.ToInt64(), y = message.LParam.ToInt64();
-            if (x >= 0 && x <= SettingsGeometry.CoordinateScale && y >= 0 && y <= SettingsGeometry.CoordinateScale && !shuttingDown)
-            {
-                TogglePanel(new Point((int)x, (int)y), Stopwatch.GetTimestamp());
-            }
-            message.Result = IntPtr.Zero;
-            return;
-        }
         base.WndProc(ref message);
     }
 

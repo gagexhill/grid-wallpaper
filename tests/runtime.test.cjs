@@ -51,12 +51,9 @@ function createRuntime(options = {}) {
       lastBackground = this.fillStyle;
       lastGeometry = [];
     },
-    clearRect() { clearCount++; },
     moveTo(x, y) { lastGeometry.push(x, y); },
     lineTo(x, y) { lastGeometry.push(x, y); },
-    beginPath() {}, stroke() {}, save() {}, restore() {},
-    setTransform() {}, scale() {},
-    createLinearGradient() { return { addColorStop() {} }; }
+    beginPath() {}, stroke() {}
   };
   const canvas = {
     ...eventTarget(),

@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const { defaults, schema, presets, fpsOptions, mouseModes, hostSettings } = window.GridConfig;
+  const { defaults, schema, presets, fpsOptions, mouseModes } = window.GridConfig;
   const settingsWindow = window.GridSettingsWindow === true;
   const clone = value => JSON.parse(JSON.stringify(value));
   const storageKey = 'grid-wallpaper.settings.v1';
@@ -243,7 +243,7 @@
     const random = (a, b) => Number((a + (b - a) * Math.random()).toFixed(2));
     return update({ sizeScale: random(0.4, 2), speedScale: random(0.3, 2.5), forceScale: random(0.4, 2), lerpSpeed: random(0.02, 0.2), cellSize: Math.round(random(12, 40)) });
   }
-  window.GridWallpaper = Object.freeze({ defaults, schema, presets, fpsOptions, mouseModes, hostSettings,
+  window.GridWallpaper = Object.freeze({ defaults, schema, presets, fpsOptions, mouseModes,
     getConfig: () => clone(config), update, reset, randomize,
     subscribe(callback) { listeners.add(callback); return () => listeners.delete(callback); },
     get storageAvailable() { return storageAvailable; }, get hostManaged() { return hostManaged; }
