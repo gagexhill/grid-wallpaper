@@ -80,6 +80,7 @@
     bindings.push(config => {
       const value = isDome ? config.domeSizes[index] : config[key];
       input.value = value;
+      input.style.setProperty('--range-progress', `${(value - spec.min) / (spec.max - spec.min) * 100}%`);
       const formatted = format(value);
       setText(output, formatted);
       input.setAttribute('aria-valuetext', formatted);
@@ -336,15 +337,14 @@
     if (isSettingsWindow) return;
     const button = menu.getBoundingClientRect();
     const bounds = availableBounds();
-    const leftSide = button.left + button.width / 2 < (bounds.left + bounds.right) / 2;
-    panel.style.left = leftSide ? `${bounds.left + edgeGap}px` : 'auto';
-    panel.style.right = leftSide ? 'auto' : `${window.innerWidth - bounds.right + edgeGap}px`;
     panel.style.maxWidth = `${Math.max(48, bounds.right - bounds.left - edgeGap * 2)}px`;
-    const below = button.top + button.height / 2 < (bounds.top + bounds.bottom) / 2;
-    const top = below ? button.bottom + 12 : bounds.top + edgeGap;
-    const bottom = below ? bounds.bottom - edgeGap : button.top - 12;
-    panel.style.top = `${top}px`;
-    panel.style.maxHeight = `${Math.max(48, bottom - top)}px`;
+    panel.style.maxHeight = `${Math.max(48, bounds.bottom - bounds.top - edgeGap * 2)}px`;
+    const minLeft = bounds.left + edgeGap, minTop = bounds.top + edgeGap;
+    const maxLeft = Math.max(minLeft, bounds.right - edgeGap - panel.offsetWidth);
+    const maxTop = Math.max(minTop, bounds.bottom - edgeGap - panel.offsetHeight);
+    panel.style.right = 'auto';
+    panel.style.left = `${Math.max(minLeft, Math.min(maxLeft, button.left + button.width / 2 - panel.offsetWidth))}px`;
+    panel.style.top = `${Math.max(minTop, Math.min(maxTop, button.top + button.height / 2))}px`;
   }
 
   function closePanel(restoreFocus = true) {
@@ -362,10 +362,9 @@
 
   function openPanel() {
     render();
-    refreshLayout();
-    placePanel();
     panel.hidden = false;
     panel.inert = false;
+    refreshLayout();
     syncMenuAction();
     pressFeedback();
     closeButton.focus();
@@ -401,7 +400,10 @@
     sections.forEach(section => { section.open = open; });
     syncExpandButton();
   });
-  sections.forEach(section => section.addEventListener('toggle', syncExpandButton));
+  sections.forEach(section => section.addEventListener('toggle', () => {
+    syncExpandButton();
+    if (!panel.hidden) placePanel();
+  }));
 
   let drag = null;
   function moveMenu(left, top) {
@@ -412,6 +414,7 @@
     menu.style.left = `${Math.max(minLeft, Math.min(maxLeft, left))}px`;
     menu.style.top = `${Math.max(minTop, Math.min(maxTop, top))}px`;
     menu.style.right = 'auto';
+    if (!panel.hidden) placePanel();
   }
   menu.addEventListener('pointerdown', event => {
     if (!event.isPrimary || event.button !== 0 || canOpenSettingsWindow()) return;
@@ -430,7 +433,6 @@
     if (!drag.moved && Math.hypot(dx, dy) < 6) return;
     if (!drag.moved) {
       drag.moved = true;
-      closePanel(false);
       menu.classList.add('dragging');
     }
     moveMenu(drag.left + dx, drag.top + dy);

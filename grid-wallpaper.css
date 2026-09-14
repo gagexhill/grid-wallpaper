@@ -40,7 +40,7 @@ button:disabled, input:disabled { cursor: default; opacity: .55; }
   position: fixed;
   top: var(--settings-gap);
   right: var(--settings-gap);
-  z-index: 2;
+  z-index: 4;
   display: grid;
   place-items: center;
   width: 48px;
@@ -90,17 +90,28 @@ h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .035em; }
 .hint { color: #b5b5a9; font-size: 12px; line-height: 1.55; margin: 12px 0; }
 .subtle-button { width: 100%; background: transparent; margin-bottom: 10px; font-size: 12px; }
 details { border-top: 1px solid #34342d; }
-summary { min-height: 52px; padding: 16px 2px; font-size: 13px; font-weight: 600; }
-summary::marker { color: #aaa993; }
+summary { display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 16px 2px; font-size: 13px; font-weight: 600; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: ''; width: 7px; height: 7px; margin-right: 4px; border-right: 1.5px solid #aaa993; border-bottom: 1.5px solid #aaa993; transform: rotate(-45deg); }
+details[open] > summary::after { transform: rotate(45deg); }
 .section-content { padding: 2px 2px 16px; }
 .control { margin: 0 0 12px; }
 .control:last-child { margin-bottom: 0; }
 .control-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; line-height: 1.45; }
 .control label, .control-heading, fieldset legend { font-size: 13px; }
 output { color: #d5d5c1; font-variant-numeric: tabular-nums; white-space: nowrap; }
-input[type="range"] { display: block; width: 100%; min-height: 48px; margin: 0; padding: 0; }
+input[type="range"] { appearance: none; display: block; width: 100%; min-height: 48px; margin: 0; padding: 0; border: 0; background: linear-gradient(to right, #c8c8b1 var(--range-progress, 0%), #48483d var(--range-progress, 0%)) center / 100% 4px no-repeat; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: transparent; }
+input[type="range"]::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; margin-top: -6px; border: 1px solid #eeeecb; border-radius: 50%; background: #c8c8b1; }
+input[type="range"]::-moz-range-track { height: 4px; background: transparent; }
+input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 1px solid #eeeecb; border-radius: 50%; background: #c8c8b1; }
+input[type="range"]:hover::-webkit-slider-thumb { background: #eeeecb; }
+input[type="range"]:hover::-moz-range-thumb { background: #eeeecb; }
 .check-control { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; cursor: pointer; }
-input[type="checkbox"] { width: 20px; height: 20px; margin: 0; flex-shrink: 0; }
+input[type="checkbox"] { appearance: none; position: relative; width: 38px; height: 22px; margin: 0; flex-shrink: 0; border: 1px solid #68685b; border-radius: 20px; background: #30302a; }
+input[type="checkbox"]::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #aaa993; }
+input[type="checkbox"]:checked { border-color: #c8c8b1; background: #c8c8b1; }
+input[type="checkbox"]:checked::after { transform: translateX(16px); background: #252522; }
 .select-control label { display: block; margin-bottom: 8px; }
 select { width: 100%; }
 fieldset { min-width: 0; border: 0; margin: 18px 0 0; padding: 0; }
@@ -135,6 +146,25 @@ input[type="color"] { width: 52px; height: 48px; flex: 0 0 52px; padding: 4px; b
 
 @media (max-width: 360px) {
   #panel { padding-right: 12px; padding-left: 12px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button, select, input[type="text"], input[type="color"], .preset-swatch { transition: background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out; }
+  #vignette { transition: opacity 220ms ease-out; }
+  summary::after { transition: transform 140ms ease-out; }
+  input[type="checkbox"] { transition: background-color 140ms ease-out, border-color 140ms ease-out; }
+  input[type="checkbox"]::after { transition: transform 140ms ease-out, background-color 140ms ease-out; }
+  details[open] > .section-content { animation: section-reveal 140ms ease-out; }
+  @keyframes section-reveal {
+    from { opacity: .85; transform: translateY(3px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+@media (forced-colors: active) {
+  input[type="checkbox"], input[type="range"] { appearance: auto; }
+  input[type="checkbox"]::after { display: none; }
+  input[type="range"] { background: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
