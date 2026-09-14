@@ -45,7 +45,16 @@ To roll back, retain a previously reviewed release package and rerun its install
 
 ## Native acceptance
 
-Record exact source commit, package SHA256, Windows/Lively versions, display configuration, and evidence in #1. Check installation on a clean extracted package; activation behind desktop icons; native Customize changes surviving a complete Lively exit/relaunch; second install; restart/sign-in restoration; sleep/wake; display resolution, scaling and hotplug; fullscreen and battery pause; and recovery when the host restarts. Do not claim hardware battery performance from a browser benchmark. Native host settings own playback and startup policy.
+Record exact source commit, package SHA256, Windows/Lively versions, display configuration and results in #1. Keep captures local and mark each unperformed check open. Run these steps on the installed copy using the primary display, WebView2 player and per-screen layout:
+
+1. Install from a clean extracted package using the README command. Confirm animation behind desktop icons. From the installed wallpaper folder identified by setup, require exit code 0 from `(Start-Process .\grid-settings.exe -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru).ExitCode`; run `.\grid-settings.exe --status | ConvertFrom-Json` for the diagnostic snapshots below.
+2. Open the custom panel with the grid button. Confirm it appears above shortcuts, controls respond, and status reports `ready: true`, `visible: true`, `suspended: false`. Record time from click to interactive controls. Check the button's press feedback, close control and Escape. Toggle the button rapidly five times from closed, then close; after pending work settles, require `visible: false` and `suspended: true`. Reopen and confirm responsive controls.
+3. Record a numeric setting, change it, and hide the panel immediately. Wait for suspension, reopen, and verify the new value in both the custom panel and Lively's Customize command. Restore the original value the same way. Fully exit Lively, confirm the helper exits, then relaunch and verify saved values and panel recovery.
+4. Move the grid button near the display edges and reopen the panel at each position. Compare status window bounds with `screen.workArea`; confirm the working-area margin, button anchor and unobscured bottom controls. Visually check all rounded corners against the CSS shape and confirm another foreground app can cover the panel.
+5. Record Lively's startup preference and the relevant per-user registrations locally. Reinstall the same package and verify saved values remain. From the extracted package, run the README installer command with `-RemoveSettingsLink` before removing any library files. Confirm the helper exits and only its owned protocol and Run value disappear. Reinstall and confirm those registrations and quick panel opening return; unrelated Run values and Lively's startup preference must remain unchanged.
+6. On the receiving laptop, separately record clean setup, Windows restart/sign-in restoration, sleep/wake, resolution and scaling changes, display hotplug, fullscreen pause, and battery pause/resume under the chosen Lively policies. Repeat panel placement and persistence checks after display changes. Leave any unavailable hardware scenario open; desktop or browser checks do not prove laptop behavior or battery performance.
+
+Native host settings own playback and startup policy. Preserve their original values after acceptance.
 
 ## Packaging and privacy
 

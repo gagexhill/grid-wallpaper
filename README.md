@@ -34,4 +34,4 @@ npm run test:install
 npm run package
 ```
 
-Only development checks require npm. Packaging compiles the small settings window using Windows' .NET Framework compiler and a pinned official WebView2 SDK; its first build needs internet access. Runtime defaults and presets live in `grid-config.js`; the renderer, settings UI and installation each have one source owner. See [AGENTS.md](AGENTS.md) for editing guidance and [OPERATIONS.md](OPERATIONS.md) for release evidence.
+Only development checks require npm. Packaging compiles the small settings window using Windows' .NET Framework compiler and a pinned official WebView2 SDK; its first build needs internet access. Runtime defaults and presets live in `grid-config.js`; the renderer, settings UI and installation each have one source owner. In a source checkout, `AGENTS.md` provides editing guidance. See [OPERATIONS.md](OPERATIONS.md) for release evidence.
