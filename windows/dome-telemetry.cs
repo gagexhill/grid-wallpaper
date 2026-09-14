@@ -28,6 +28,7 @@ internal sealed class DomeTelemetry : IDisposable
     private const long MaximumSequence = 9007199254740991L;
     private readonly object gate = new object();
     private readonly string installRoot;
+    private readonly string mappedOrigin;
     private readonly Action<Dictionary<string, object>> onState;
     private readonly CancellationTokenSource lifetime = new CancellationTokenSource();
     private HttpListener listener;
@@ -72,6 +73,7 @@ internal sealed class DomeTelemetry : IDisposable
     {
         if (onState == null) throw new ArgumentNullException("onState");
         this.installRoot = Path.GetFullPath(installRoot);
+        mappedOrigin = LivelyOrigin(this.installRoot);
         this.onState = onState;
     }
 
@@ -145,7 +147,7 @@ internal sealed class DomeTelemetry : IDisposable
                         && request.RemoteEndPoint != null && request.RemoteEndPoint.Address.Equals(IPAddress.Loopback)
                         && request.Url != null && request.Url.Host == "127.0.0.1"
                         && ValidateAuthentication(request.Headers["Origin"], request.RawUrl,
-                            request.Headers["Sec-WebSocket-Protocol"], sessionToken);
+                            request.Headers["Sec-WebSocket-Protocol"], sessionToken, mappedOrigin);
                     lock (gate) allowed = allowed && !disposed && peer == null;
                     if (!allowed)
                     {
@@ -282,9 +284,19 @@ internal sealed class DomeTelemetry : IDisposable
         try { onState(state); } catch (Exception) { }
     }
 
-    internal static bool ValidateAuthentication(string origin, string rawPath, string protocols, string token)
+    private static string LivelyOrigin(string directory)
     {
-        if (origin != "null" || rawPath != ResourcePath || protocols == null || protocols.Length > 128 || !TokenValid(token)) return false;
+        // Lively 2.2.1 maps each local folder to the first eight SHA-1 bytes plus .localhost.
+        // This mirrors its address format only; the random session token authenticates the peer.
+        using (SHA1 hash = SHA1.Create())
+            return "https://" + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(directory)), 0, 8)
+                .Replace("-", "").ToLowerInvariant() + ".localhost";
+    }
+
+    internal static bool ValidateAuthentication(string origin, string rawPath, string protocols, string token, string mappedOrigin = null)
+    {
+        if (!(origin == "null" || mappedOrigin != null && origin == mappedOrigin)
+            || rawPath != ResourcePath || protocols == null || protocols.Length > 128 || !TokenValid(token)) return false;
         string[] offered = protocols.Split(',');
         if (offered.Length != 2) return false;
         string secret = null;
@@ -489,6 +501,11 @@ internal sealed class DomeTelemetry : IDisposable
     internal static int SelfTest()
     {
         string token = new string('a', 43), header = Protocol + ", " + TokenProtocol + token;
+        string mapped = LivelyOrigin(@"C:\wallpaper fixture");
+        if (!ValidateAuthentication(mapped, ResourcePath, header, token, mapped)
+            || ValidateAuthentication("https://other.localhost", ResourcePath, header, token, mapped)
+            || ValidateAuthentication(mapped + ":443", ResourcePath, header, token, mapped)
+            || ValidateAuthentication(null, ResourcePath, header, token, mapped)) return 71;
         if (!ValidateAuthentication("null", ResourcePath, header, token)
             || ValidateAuthentication(null, ResourcePath, header, token) || ValidateAuthentication("https://example.com", ResourcePath, header, token)
             || ValidateAuthentication("null", ResourcePath + "?token=" + token, header, token)
