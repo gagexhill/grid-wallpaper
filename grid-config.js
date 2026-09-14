@@ -33,7 +33,8 @@
     return Object.freeze(value);
   }
   const hostSettings = { settingsUri: 'grid-wallpaper-settings:' };
-  const config = freeze({ schema, defaults, presets, hostSettings, fpsOptions: [15, 24, 30, 60], mouseModes: ['repel', 'attract', 'off'] });
+  const domePulse = { min: 0.55, max: 1 };
+  const config = freeze({ schema, defaults, presets, hostSettings, domePulse, fpsOptions: [15, 24, 30, 60], mouseModes: ['repel', 'attract', 'off'] });
   if (typeof module !== 'undefined' && module.exports) module.exports = config;
   else root.GridConfig = config;
 })(typeof window === 'undefined' ? globalThis : window);

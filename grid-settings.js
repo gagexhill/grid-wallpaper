@@ -10,7 +10,12 @@
   const status = document.getElementById('action-status');
   const bindings = [];
   const colorBindings = [];
+  const domeBindings = [];
   const isSettingsWindow = window.GridSettingsWindow === true;
+  let nativeVisible = !isSettingsWindow;
+  let domeState = null;
+  let stopDomeObservation = null;
+  const contentAnimations = new Set();
   document.documentElement.classList.toggle('settings-window', isSettingsWindow);
 
   function element(tag, className, text) {
@@ -62,6 +67,8 @@
     input.step = spec.step;
     const label = element('label', '', isDome ? `Dome ${index + 1}` : spec.label);
     label.htmlFor = input.id;
+    const mode = isDome ? element('span', 'dome-mode') : null;
+    if (mode) label.append(mode);
     const output = element('output');
     output.htmlFor = input.id;
     output.setAttribute('aria-live', 'off');
@@ -77,21 +84,32 @@
         api.update({ [key]: Number(input.value) });
       }
     });
-    bindings.push(config => {
-      const value = isDome ? config.domeSizes[index] : config[key];
+    const sync = config => {
+      const base = isDome ? config.domeSizes[index] : config[key];
+      const live = isDome && config.autoSize && document.activeElement !== input
+        && domeState?.autoSize === true && domeState.bases[index] === base;
+      const value = live ? domeState.sizes[index] : base;
+      input.min = live ? 0 : spec.min;
       input.value = value;
-      input.style.setProperty('--range-progress', `${(value - spec.min) / (spec.max - spec.min) * 100}%`);
+      input.style.setProperty('--range-progress', `${(value - Number(input.min)) / (spec.max - Number(input.min)) * 100}%`);
       const formatted = format(value);
       setText(output, formatted);
-      input.setAttribute('aria-valuetext', formatted);
+      input.setAttribute('aria-valuetext', live ? `Live size ${formatted}; base ${format(base)}` : formatted);
       if (isDome) {
+        setText(mode, config.autoSize ? `Base ${format(base)}${live ? ' · live' : ''}` : '');
         const hidden = index >= config.count;
         if (hidden && row.contains(document.activeElement)) {
           row.closest('details').querySelector('summary').focus();
         }
         row.hidden = hidden;
       }
-    });
+    };
+    bindings.push(sync);
+    if (isDome) {
+      domeBindings.push(sync);
+      input.addEventListener('focus', () => sync(api.getConfig()));
+      input.addEventListener('blur', () => sync(api.getConfig()));
+    }
   }
 
   function checkbox(container, key, title) {
@@ -199,8 +217,37 @@
 
   const domes = document.getElementById('dome-controls');
   checkbox(domes, 'autoSize', 'Auto-change dome sizes');
-  domes.append(element('p', 'hint', 'Set each dome’s base size. Auto-change gently varies these sizes.'));
+  const domeHelp = element('p', 'hint');
+  domeHelp.id = 'dome-size-status';
+  domes.append(domeHelp);
   api.defaults.domeSizes.forEach((_, index) => range(domes, 'domeSize', multiplier, index));
+
+  function updateDomeHelp() {
+    const config = api.getConfig();
+    setText(domeHelp, !config.autoSize ? 'Set each dome’s base size.'
+      : domeState ? `${domeState.paused ? 'Live sizes are paused.' : 'Sliders show live sizes.'} A focused slider edits its base; move focus away to resume live feedback. Global size and display fit also apply.`
+        : isSettingsWindow && window.GridSettingsHost.telemetryAvailable === false
+          ? 'Live size feedback is unavailable. You can still adjust each dome’s base size.'
+          : 'Waiting for live sizes. You can still adjust each dome’s base size.');
+  }
+  function updateDomeObservation() {
+    const observe = !document.hidden && !panel.hidden && nativeVisible && domes.closest('details').open && api.getConfig().autoSize;
+    if (observe && !stopDomeObservation) {
+      stopDomeObservation = api.subscribeDomeState(state => {
+        domeState = state;
+        const config = api.getConfig();
+        domeBindings.slice(0, config.count).forEach(sync => sync(config));
+        updateDomeHelp();
+      });
+      if (isSettingsWindow) window.GridSettingsHost.observeDomes(true);
+    } else if (!observe && stopDomeObservation) {
+      stopDomeObservation();
+      stopDomeObservation = null;
+      domeState = null;
+      if (isSettingsWindow) window.GridSettingsHost.observeDomes(false);
+    }
+    updateDomeHelp();
+  }
 
   const performance = document.getElementById('performance-controls');
   checkbox(performance, 'snapshot', 'Freeze frame');
@@ -268,6 +315,7 @@
       layoutHostManaged = api.hostManaged;
       refreshLayout();
     }
+    updateDomeObservation();
   }
 
   function syncMenuAction() {
@@ -356,6 +404,9 @@
     if (restoreFocus || panel.contains(document.activeElement)) menu.focus();
     panel.hidden = true;
     panel.inert = true;
+    updateDomeObservation();
+    contentAnimations.forEach(animation => animation.cancel());
+    contentAnimations.clear();
     syncMenuAction();
     pressFeedback();
   }
@@ -368,7 +419,41 @@
     syncMenuAction();
     pressFeedback();
     closeButton.focus();
+    updateDomeObservation();
+    if (!isSettingsWindow) revealPanelContent();
   }
+
+  function revealPanelContent() {
+    contentAnimations.forEach(animation => animation.cancel());
+    contentAnimations.clear();
+    if (reducedMotion.matches) return;
+    // Animate content only: the native window, border and input availability stay immediate.
+    for (const node of panel.children) {
+      const animation = node.animate([
+        { opacity: .92, transform: 'translateY(2px)' },
+        { opacity: 1, transform: 'translateY(0)' }
+      ], { duration: 110, easing: 'ease-out' });
+      contentAnimations.add(animation);
+      animation.finished.catch(() => {}).finally(() => contentAnimations.delete(animation));
+    }
+  }
+  window.addEventListener('grid-settings-shown', () => {
+    nativeVisible = true;
+    updateDomeObservation();
+    revealPanelContent();
+  });
+  window.addEventListener('grid-settings-hidden', () => {
+    nativeVisible = false;
+    updateDomeObservation();
+    contentAnimations.forEach(animation => animation.cancel());
+    contentAnimations.clear();
+  });
+  reducedMotion.addEventListener('change', () => {
+    if (reducedMotion.matches) {
+      contentAnimations.forEach(animation => animation.cancel());
+      contentAnimations.clear();
+    }
+  });
 
   let suppressClick = false;
   menu.addEventListener('click', event => {
@@ -403,6 +488,7 @@
   sections.forEach(section => section.addEventListener('toggle', () => {
     syncExpandButton();
     if (!panel.hidden) placePanel();
+    updateDomeObservation();
   }));
 
   let drag = null;
@@ -456,7 +542,10 @@
   menu.addEventListener('lostpointercapture', event => finishDrag(event, false));
   window.addEventListener('pointerout', event => { if (!event.relatedTarget) finishDrag(event, false); });
   window.addEventListener('blur', () => finishDrag(null, false));
-  document.addEventListener('visibilitychange', () => { if (document.hidden) finishDrag(null, false); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) finishDrag(null, false);
+    updateDomeObservation();
+  });
   function refreshLayout() {
     if (isSettingsWindow || canOpenSettingsWindow()) return;
     const bounds = menu.getBoundingClientRect();

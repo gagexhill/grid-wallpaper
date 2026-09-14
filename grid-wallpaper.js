@@ -1,10 +1,12 @@
 (function () {
   'use strict';
-  const { defaults, schema, presets, fpsOptions, mouseModes } = window.GridConfig;
+  const { defaults, schema, presets, fpsOptions, mouseModes, domePulse } = window.GridConfig;
   const settingsWindow = window.GridSettingsWindow === true;
   const clone = value => JSON.parse(JSON.stringify(value));
   const storageKey = 'grid-wallpaper.settings.v1';
   const listeners = new Set();
+  const domeListeners = new Set();
+  let domeState = null, domeSequence = 0, remoteDomeSequence = -1, hasDomeFrame = false;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let storageAvailable = true, hostManaged = false, hostPaused = false;
   let config = { ...clone(defaults), snapshot: reducedMotion.matches };
@@ -76,7 +78,8 @@
   }
   function prepareDomes() {
     for (const dome of domes) {
-      const pulse = config.autoSize ? 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(dome.phase)) : 1;
+      const pulse = config.autoSize ? domePulse.min + (domePulse.max - domePulse.min) * (0.5 + 0.5 * Math.sin(dome.phase)) : domePulse.max;
+      dome.pulse = pulse;
       dome.radius = Math.min(200 * config.domeSizes[dome.i] * config.sizeScale * pulse, Math.min(width, height) * 0.38);
       dome.force = bases[dome.i][0] * config.forceScale * dome.radius / 200;
     }
@@ -196,6 +199,8 @@
       ctx.globalCompositeOperation = 'source-over';
     }
     ctx.globalAlpha = 1; dirty = false;
+    hasDomeFrame = true;
+    refreshDomeState();
   }
   function strokeGlow(a, b) {
     const opacity = (glow[a] + glow[b]) / 2;
@@ -225,9 +230,65 @@
     schedule();
   }
   function notify() { for (const listener of listeners) listener(clone(config)); }
+  function getDomeState() {
+    if (settingsWindow) return domeState ? clone(domeState) : null;
+    if (!hasDomeFrame || domeSequence >= Number.MAX_SAFE_INTEGER) return null;
+    if (!domeState) {
+      const screen = window.screen;
+      domeState = {
+        kind: 'domes', sequence: domeSequence, autoSize: config.autoSize,
+        paused: config.snapshot || hostPaused || document.hidden,
+        bases: config.domeSizes.slice(0, config.count),
+        sizes: domes.map(dome => config.domeSizes[dome.i] * dome.pulse),
+        screen: { left: screen?.availLeft ?? 0, top: screen?.availTop ?? 0,
+          width: screen?.availWidth ?? width, height: screen?.availHeight ?? height,
+          scale: window.devicePixelRatio || 1 }
+      };
+    }
+    return clone(domeState);
+  }
+  function notifyDomeState() {
+    for (const listener of domeListeners) listener(getDomeState());
+  }
+  function refreshDomeState() {
+    if (settingsWindow) return;
+    domeState = null;
+    if (domeSequence < Number.MAX_SAFE_INTEGER) domeSequence++;
+    if (domeListeners.size) notifyDomeState();
+  }
+  function setDomeState(state) {
+    if (!settingsWindow) return false;
+    if (state === null) {
+      domeState = null; remoteDomeSequence = -1; notifyDomeState(); return true;
+    }
+    if (!state || state.kind !== 'domes' || !Number.isSafeInteger(state.sequence) || state.sequence < 0 ||
+      state.sequence <= remoteDomeSequence || typeof state.paused !== 'boolean' || state.autoSize !== config.autoSize ||
+      !Array.isArray(state.bases) || !Array.isArray(state.sizes) || state.bases.length !== config.count || state.sizes.length !== config.count) return false;
+    const screen = state.screen;
+    if (!screen || !['left', 'top', 'width', 'height', 'scale'].every(key => Number.isFinite(screen[key])) ||
+      Math.abs(screen.left) > 131072 || Math.abs(screen.top) > 131072 || screen.width < 1 || screen.width > 32768 ||
+      screen.height < 1 || screen.height > 32768 || screen.scale < 0.5 || screen.scale > 8) return false;
+    for (let index = 0; index < config.count; index++) {
+      const base = state.bases[index], size = state.sizes[index];
+      if (!Number.isFinite(base) || base < schema.domeSize.min || base > schema.domeSize.max ||
+        Math.abs(base - config.domeSizes[index]) > 0.000001 || !Number.isFinite(size) ||
+        size < base * (state.autoSize ? domePulse.min : domePulse.max) - 0.000000001 ||
+        size > base * domePulse.max + 0.000000001) return false;
+    }
+    remoteDomeSequence = state.sequence;
+    domeState = { kind: 'domes', sequence: state.sequence, autoSize: state.autoSize, paused: state.paused,
+      bases: state.bases.slice(), sizes: state.sizes.slice(),
+      screen: { left: screen.left, top: screen.top, width: screen.width, height: screen.height, scale: screen.scale } };
+    notifyDomeState(); return true;
+  }
   function update(patch, persist = true) {
+    const previous = config;
     const wasFrozen = config.snapshot;
     config = normalize(patch, config);
+    const domeConfigChanged = previous.count !== config.count || previous.autoSize !== config.autoSize ||
+      config.domeSizes.some((size, index) => size !== previous.domeSizes[index]);
+    if (domeConfigChanged) { hasDomeFrame = false; domeState = null; notifyDomeState(); }
+    else if (wasFrozen !== config.snapshot) refreshDomeState();
     if (wasFrozen !== config.snapshot) stop();
     if (!config.gradientLines) waves.length = 0;
     syncCount();
@@ -244,12 +305,20 @@
     return update({ sizeScale: random(0.4, 2), speedScale: random(0.3, 2.5), forceScale: random(0.4, 2), lerpSpeed: random(0.02, 0.2), cellSize: Math.round(random(12, 40)) });
   }
   window.GridWallpaper = Object.freeze({ defaults, schema, presets, fpsOptions, mouseModes,
-    getConfig: () => clone(config), update, reset, randomize,
+    getConfig: () => clone(config), getDomeState, setDomeState, update, reset, randomize,
     subscribe(callback) { listeners.add(callback); return () => listeners.delete(callback); },
+    subscribeDomeState(callback) {
+      if (typeof callback !== 'function') throw new TypeError('A dome state listener must be a function.');
+      domeListeners.add(callback); callback(getDomeState());
+      return () => domeListeners.delete(callback);
+    },
     get storageAvailable() { return storageAvailable; }, get hostManaged() { return hostManaged; }
   });
   window.livelyPropertyListener = function (name, value) {
-    if (!hostManaged) { hostManaged = true; config = clone(defaults); }
+    if (!hostManaged) {
+      hostManaged = true; config = clone(defaults);
+      hasDomeFrame = false; domeState = null; notifyDomeState();
+    }
     const patch = {};
     if (name === 'fpsLimit') patch.fpsLimit = fpsOptions[value];
     else if (name === 'mouseMode') patch.mouseMode = mouseModes[value];
@@ -262,11 +331,12 @@
     try {
       const message = typeof data === 'string' ? JSON.parse(data) : data;
       if (typeof message?.IsPaused !== 'boolean') return;
-      hostPaused = message.IsPaused; stop(); if (!hostPaused) invalidate();
+      const changed = hostPaused !== message.IsPaused;
+      hostPaused = message.IsPaused; stop(); if (changed) refreshDomeState(); if (!hostPaused) invalidate();
     } catch { /* Malformed host messages leave playback unchanged. */ }
   };
   window.addEventListener('resize', resize);
-  document.addEventListener('visibilitychange', () => { stop(); if (!document.hidden) invalidate(); });
+  document.addEventListener('visibilitychange', () => { stop(); refreshDomeState(); if (!document.hidden) invalidate(); });
   window.addEventListener('pagehide', stop);
   window.addEventListener('pageshow', invalidate);
   window.addEventListener('pointermove', event => {
