@@ -16,7 +16,7 @@ For a read-only plan, add `-Preview`. Existing Lively installations and custom l
 
 Click the grid's settings button to open its custom panel above desktop shortcuts. Its top-right corner meets the button's center, with placement kept clear of the taskbar. Click the button again, use the close control, or press Escape to hide it. Changes save through Lively. In a normal browser, the same panel saves locally when browser storage is available. Lively owns start at sign-in and pause-on-battery behavior.
 
-Setup warms the settings panel so opening it is quick. While hidden, it finishes pending saves and suspends the embedded browser. A per-user startup entry prepares it after sign-in when Lively is running; it does not start Lively or change Lively's startup preference. The settings host exits with Lively.
+Setup warms the settings panel so the button opens it directly. While hidden, it finishes pending saves and suspends the embedded browser. A per-user startup entry prepares it after sign-in when Lively is running; it does not start Lively or change Lively's startup preference. When Lively exits, the browser and button close; a small helper waits for Lively to return.
 
 The desktop panel supports the primary display with Lively's default WebView2 player and per-screen layout. For other display arrangements or the optional Chromium player, use Lively's **Customize wallpaper** command. The Windows package targets x64 Windows 10/11.
 

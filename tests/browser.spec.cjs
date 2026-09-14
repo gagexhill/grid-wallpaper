@@ -90,6 +90,49 @@ test('320px layout, practical targets, drag-to-bottom and color validation', asy
   await page.screenshot({ path: info.outputPath('narrow-settings.png') });
 });
 
+test('inline dragging follows fast movement outside the button when capture is unavailable', async ({ page }) => {
+  const menu = page.locator('#hamburger');
+  await menu.evaluate(button => { button.setPointerCapture = () => { throw new DOMException('Unavailable', 'NotFoundError'); }; });
+  const start = await menu.boundingBox();
+  await page.mouse.move(start.x + 24, start.y + 24);
+  await page.mouse.down();
+  await page.mouse.move(130, 430);
+  const moving = await menu.boundingBox();
+  expect(moving.x).toBeCloseTo(106, 0);
+  expect(moving.y).toBeCloseTo(406, 0);
+  await page.mouse.up();
+  const stopped = await menu.boundingBox();
+  expect(stopped.x).toBe(16);
+  await page.mouse.move(stopped.x + 24, stopped.y + 24);
+  await page.mouse.move(400, 200);
+  expect(await menu.boundingBox()).toEqual(stopped);
+  await expect(page.locator('#panel')).toBeHidden();
+  await menu.click();
+  await expect(page.locator('#panel')).toBeVisible();
+});
+
+test('inline drag cancellation and lost mouse release never resume on hover', async ({ page }) => {
+  const results = await page.evaluate(() => {
+    const button = document.getElementById('hamburger');
+    const results = [];
+    for (const reason of ['pointercancel', 'lostpointercapture', 'blur', 'pointerout', 'released']) {
+      const start = button.getBoundingClientRect();
+      const pointer = { pointerId: 81, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, bubbles: true };
+      button.dispatchEvent(new PointerEvent('pointerdown', { ...pointer, clientX: start.x + 24, clientY: start.y + 24 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { ...pointer, clientX: 250, clientY: 250 }));
+      if (reason === 'blur') window.dispatchEvent(new Event('blur'));
+      else if (reason === 'released') window.dispatchEvent(new PointerEvent('pointermove', { ...pointer, buttons: 0, clientX: 300, clientY: 300 }));
+      else (reason === 'lostpointercapture' ? button : window).dispatchEvent(new PointerEvent(reason, pointer));
+      const stopped = button.getBoundingClientRect().toJSON();
+      button.dispatchEvent(new PointerEvent('pointermove', { ...pointer, buttons: 0, clientX: 600, clientY: 500 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { ...pointer, clientX: 650, clientY: 550 }));
+      results.push({ reason, stopped: JSON.stringify(stopped) === JSON.stringify(button.getBoundingClientRect().toJSON()), dragging: button.classList.contains('dragging') });
+    }
+    return results;
+  });
+  expect(results.every(result => result.stopped && !result.dragging)).toBe(true);
+});
+
 test('reduced-motion first run freezes and blocked storage remains usable', async ({ page, context }) => {
   await context.clearCookies();
   await page.evaluate(() => localStorage.clear());
@@ -161,20 +204,19 @@ test('settings opening and closing have press feedback without shrinking the hit
   expect(await menu.locator('svg').evaluate(icon => icon.getAnimations().length)).toBe(0);
 });
 
-test('Lively WebView2 opens the custom panel link while other hosts keep the inline panel', async ({ page }) => {
+test('Lively WebView2 uses the native launcher while other hosts keep the inline panel', async ({ page }) => {
   await page.evaluate(() => {
     window.chrome.webview = {};
     window.openedSettings = [];
     window.open = (...args) => window.openedSettings.push(args);
     livelyPropertyListener('count', 5);
   });
-  const button = await page.locator('#hamburger').boundingBox();
-  const viewport = page.viewportSize();
-  await page.locator('#hamburger').click();
-  const expectedLink = `grid-wallpaper-settings:open?x=${((button.x + button.width / 2) / viewport.width).toFixed(6)}&y=${((button.y + button.height / 2) / viewport.height).toFixed(6)}`;
-  expect(await page.evaluate(() => window.openedSettings)).toEqual([[expectedLink, '_blank']]);
+  await expect(page.locator('#hamburger')).toBeHidden();
+  await page.locator('#hamburger').evaluate(button => button.click());
+  expect(await page.evaluate(() => window.openedSettings)).toEqual([]);
   await expect(page.locator('#panel')).toBeHidden();
-  await page.evaluate(() => { delete window.chrome.webview; });
+  await page.evaluate(() => { delete window.chrome.webview; livelyPropertyListener('count', 6); });
+  await expect(page.locator('#hamburger')).toBeVisible();
   await page.locator('#hamburger').click();
   await expect(page.locator('#panel')).toBeVisible();
 });
@@ -183,6 +225,7 @@ test('custom host preserves the panel and confirms only saved revisions', async 
   await page.setViewportSize({ width: 360, height: 700 });
   await page.addInitScript(() => {
     window.GridSettingsWindow = true;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1.25 });
     window.hostMessages = [];
     window.animationRequests = 0;
     const raf = window.requestAnimationFrame.bind(window);
@@ -197,11 +240,41 @@ test('custom host preserves the panel and confirms only saved revisions', async 
   await expect(page.locator('#hamburger')).toBeHidden();
   await expect(page.locator('#setting-count')).toBeDisabled();
   const radius = await page.locator('#panel').evaluate(panel => Number.parseFloat(getComputedStyle(panel).borderTopRightRadius));
-  expect(await page.evaluate(() => window.hostMessages)).toEqual([{ kind: 'ready', radius }]);
+  const messages = await page.evaluate(() => window.hostMessages);
+  expect(messages).toHaveLength(1);
+  const appearance = messages[0];
+  expect(appearance.kind).toBe('ready');
+  expect(appearance.radius).toBe(radius);
+  expect(appearance.launcher.width).toBeGreaterThanOrEqual(48);
+  expect(appearance.launcher.height).toBeGreaterThanOrEqual(48);
+  expect(appearance.launcher.frames).toHaveLength(6);
+  expect(Buffer.byteLength(JSON.stringify(appearance))).toBeLessThanOrEqual(65536);
+  const pixels = await page.evaluate(async launcher => {
+    const image = await createImageBitmap(new Blob([Uint8Array.from(atob(launcher.frames[0]), character => character.charCodeAt(0))], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width; canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+    const alpha = context.getImageData(0, 0, 1, 1).data[3];
+    return { width: image.width, height: image.height, alpha, ratio: devicePixelRatio };
+  }, appearance.launcher);
+  expect(pixels.width).toBe(Math.round(appearance.launcher.width * pixels.ratio));
+  expect(pixels.height).toBe(Math.round(appearance.launcher.height * pixels.ratio));
+  expect(pixels.alpha).toBe(0);
+  expect(new Set(appearance.launcher.frames).size).toBe(6);
   expect(await page.evaluate(() => window.animationRequests)).toBe(0);
   await page.evaluate(properties => window.receiveHostMessage({ data: { kind: 'init', properties } }), nativeProperties);
   await expect(page.locator('#setting-count')).toBeEnabled();
   await expect(page.locator('#save-status')).toHaveText('Changes save automatically.');
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'shown', sequence: 1 } }));
+  await expect.poll(() => page.evaluate(() => window.hostMessages.at(-1))).toEqual({ kind: 'interactive', sequence: 1 });
+  await page.evaluate(() => {
+    window.receiveHostMessage({ data: { kind: 'loading' } });
+    window.receiveHostMessage({ data: { kind: 'shown', sequence: 2 } });
+    window.receiveHostMessage({ data: { kind: 'hidden' } });
+  });
+  await page.evaluate(properties => window.receiveHostMessage({ data: { kind: 'init', properties } }), nativeProperties);
+  expect(await page.evaluate(() => window.hostMessages.filter(message => message.kind === 'interactive').map(message => message.sequence))).toEqual([1]);
   await page.getByRole('button', { name: 'Expand all sections' }).click();
   await expect(page.locator('.preset')).toHaveCount(8);
   await page.getByRole('button', { name: 'Dusk', exact: true }).click();

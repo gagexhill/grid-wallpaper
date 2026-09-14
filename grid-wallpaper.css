@@ -36,6 +36,7 @@ button:disabled, input:disabled { cursor: default; opacity: .55; }
 }
 #vignette.on { opacity: 1; }
 #hamburger {
+  --settings-press-scale: .82;
   position: fixed;
   top: var(--settings-gap);
   right: var(--settings-gap);
@@ -50,7 +51,7 @@ button:disabled, input:disabled { cursor: default; opacity: .55; }
   user-select: none;
 }
 #hamburger svg { transition: transform 90ms ease-out; }
-#hamburger:active:not(.dragging) svg { transform: scale(.82); }
+#hamburger:active:not(.dragging) svg { transform: scale(var(--settings-press-scale)); }
 #hamburger.dragging { cursor: grabbing; }
 #panel {
   position: fixed;

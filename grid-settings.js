@@ -38,7 +38,7 @@
     if (!reducedMotion.matches) {
       pressAnimation = menu.querySelector('svg').animate([
         { transform: 'scale(1)' },
-        { transform: 'scale(.78)', offset: .35 },
+        { transform: `scale(${getComputedStyle(menu).getPropertyValue('--settings-press-scale').trim()})`, offset: .35 },
         { transform: 'scale(1)' }
       ], { duration: 180, easing: 'ease-out' });
     }
@@ -270,6 +270,7 @@
   }
 
   function syncMenuAction() {
+    menu.hidden = canOpenSettingsWindow();
     if (canOpenSettingsWindow()) {
       menu.setAttribute('aria-label', 'Open grid settings');
       menu.title = 'Settings · drag to move';
@@ -377,13 +378,8 @@
       return;
     }
     suppressClick = false;
-    if (canOpenSettingsWindow()) {
-      pressFeedback();
-      const button = menu.getBoundingClientRect();
-      const x = Math.max(0, Math.min(1, (button.left + button.width / 2) / window.innerWidth));
-      const y = Math.max(0, Math.min(1, (button.top + button.height / 2) / window.innerHeight));
-      window.open(`${api.hostSettings.settingsUri}open?x=${x.toFixed(6)}&y=${y.toFixed(6)}`, '_blank');
-    } else if (panel.hidden) openPanel();
+    if (canOpenSettingsWindow()) return;
+    if (panel.hidden) openPanel();
     else closePanel();
   });
   closeButton.addEventListener('click', () => closePanel());
@@ -418,26 +414,32 @@
     menu.style.right = 'auto';
   }
   menu.addEventListener('pointerdown', event => {
-    if (!event.isPrimary || event.button !== 0) return;
+    if (!event.isPrimary || event.button !== 0 || canOpenSettingsWindow()) return;
+    event.preventDefault();
+    menu.focus({ preventScroll: true });
     suppressClick = false;
     const bounds = menu.getBoundingClientRect();
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top, moved: false };
-    menu.setPointerCapture(event.pointerId);
+    try { menu.setPointerCapture(event.pointerId); } catch { /* Window listeners handle uncaptured input. */ }
   });
-  menu.addEventListener('pointermove', event => {
+  window.addEventListener('pointermove', event => {
     if (!drag || event.pointerId !== drag.id) return;
+    if (event.pointerType === 'mouse' && !(event.buttons & 1)) { finishDrag(event, false); return; }
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (!drag.moved && Math.hypot(dx, dy) < 6) return;
-    drag.moved = true;
-    closePanel(false);
-    menu.classList.add('dragging');
+    if (!drag.moved) {
+      drag.moved = true;
+      closePanel(false);
+      menu.classList.add('dragging');
+    }
     moveMenu(drag.left + dx, drag.top + dy);
   });
-  function finishDrag(event) {
-    if (!drag || event.pointerId !== drag.id) return;
+  function finishDrag(event, snap = true) {
+    if (!drag || (event && event.pointerId !== drag.id)) return;
+    const pointerId = drag.id;
     suppressClick = drag.moved;
-    if (drag.moved) {
+    if (drag.moved && snap) {
       const button = menu.getBoundingClientRect();
       const bounds = availableBounds();
       const leftSide = button.left + button.width / 2 < (bounds.left + bounds.right) / 2;
@@ -445,13 +447,16 @@
     }
     drag = null;
     menu.classList.remove('dragging');
-    if (menu.hasPointerCapture(event.pointerId)) menu.releasePointerCapture(event.pointerId);
+    try { if (menu.hasPointerCapture(pointerId)) menu.releasePointerCapture(pointerId); } catch { /* Capture may already have ended in the host. */ }
   }
-  menu.addEventListener('pointerup', finishDrag);
-  menu.addEventListener('pointercancel', finishDrag);
-  menu.addEventListener('lostpointercapture', finishDrag);
+  window.addEventListener('pointerup', event => finishDrag(event));
+  window.addEventListener('pointercancel', event => finishDrag(event, false));
+  menu.addEventListener('lostpointercapture', event => finishDrag(event, false));
+  window.addEventListener('pointerout', event => { if (!event.relatedTarget) finishDrag(event, false); });
+  window.addEventListener('blur', () => finishDrag(null, false));
+  document.addEventListener('visibilitychange', () => { if (document.hidden) finishDrag(null, false); });
   function refreshLayout() {
-    if (isSettingsWindow) return;
+    if (isSettingsWindow || canOpenSettingsWindow()) return;
     const bounds = menu.getBoundingClientRect();
     moveMenu(bounds.left, bounds.top);
     if (!panel.hidden) placePanel();
