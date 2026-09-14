@@ -94,7 +94,8 @@ try {
     $modulePath = Join-Path $packageDirectory 'installer-fixture.psm1'
     Write-Fixture $modulePath $moduleText
     foreach ($runtimeName in $runtimeNames) {
-        $sourceDirectory = if ($runtimeName -match '\.(exe|dll|txt)$') { $hostBuildDirectory } else { $wallpaperSourceDirectory }
+        $sourceDirectory = if ($runtimeName -ceq 'LICENSE.txt') { $packageDirectory }
+            elseif ($runtimeName -match '\.(exe|dll|txt)$') { $hostBuildDirectory } else { $wallpaperSourceDirectory }
         Write-Fixture (Join-Path $sourceDirectory $runtimeName) ('fixture: ' + $runtimeName)
     }
     Write-Fixture (Join-Path $wallpaperSourceDirectory 'LivelyInfo.json') $metadataText
@@ -109,9 +110,12 @@ try {
     $storeInstallation = [pscustomobject]@{ Executable = (Join-Path $fixtureDirectory 'store package\Lively\Lively.exe'); Store = $true }
     Assert-Check ((Get-LivelyUiPath $storeInstallation) -ceq (Join-Path $fixtureDirectory 'store package\Lively.UI.WinUI.exe')) 'Store library refresh must identify the UI beside its core directory.'
     Assert-Check ($runtimeNames -contains 'grid-settings.exe') 'The runtime manifest must include the native settings host.'
+    Assert-Check ($runtimeNames -ccontains 'LICENSE.txt') 'The project license must accompany installed runtime copies.'
+    Assert-Check ($runtimeNames -ccontains 'webview2-license.txt') 'The separate WebView2 redistribution notice must accompany installed libraries.'
     Assert-Check (@($runtimeNames | Where-Object { $_ -match '\.dll$' }).Count -gt 0) 'The runtime manifest must include native host dependencies.'
     foreach ($runtimeName in $runtimeNames) {
-        $expectedSourceDirectory = if ($runtimeName -match '\.(exe|dll|txt)$') { $hostBuildDirectory } else { $wallpaperSourceDirectory }
+        $expectedSourceDirectory = if ($runtimeName -ceq 'LICENSE.txt') { $packageDirectory }
+            elseif ($runtimeName -match '\.(exe|dll|txt)$') { $hostBuildDirectory } else { $wallpaperSourceDirectory }
         Assert-Check ((Get-RuntimeSource $runtimeName) -ceq (Join-Path $expectedSourceDirectory $runtimeName)) ('Organized checkout runtime source differs: ' + $runtimeName)
     }
     Assert-Check ((Get-RuntimeSource 'grid-settings.exe') -ceq (Join-Path $hostBuildDirectory 'grid-settings.exe')) 'Source checkouts must resolve built native files under dist/settings-host.'
@@ -247,6 +251,33 @@ try {
     Assert-Check ((Get-Content -LiteralPath $savedSettingsPath -Raw) -ceq '{"preserved":true}') 'Repeat installation must preserve native saved customization.'
     Assert-Check ((Get-Content -LiteralPath $existingExtraPath -Raw) -ceq 'preserve existing unrelated data') 'Repeat installation must preserve unrelated existing files.'
     Write-Output 'PASS repeat installation preserves native settings'
+
+    $legacyMetadata = $metadataText | ConvertFrom-Json
+    $legacyMetadata.Author = 'Ventryn LLC'
+    $legacyMetadata.License = $null
+    $legacyMetadataPath = Join-Path $expectedCustomDestination 'LivelyInfo.json'
+    Write-Fixture $legacyMetadataPath ($legacyMetadata | ConvertTo-Json)
+    Assert-Destination $expectedCustomDestination $metadata
+    foreach ($field in @('Title', 'FileName', 'Author', 'Contact')) {
+        $collisionMetadata = $legacyMetadata | ConvertTo-Json | ConvertFrom-Json
+        $collisionMetadata.$field = 'unrelated wallpaper'
+        Write-Fixture $legacyMetadataPath ($collisionMetadata | ConvertTo-Json)
+        Assert-Fails { Assert-Destination $expectedCustomDestination $metadata } ('Legacy credit migration must reject a different ' + $field + '.') 'different wallpaper'
+    }
+    $missingContactMetadata = $legacyMetadata | ConvertTo-Json | ConvertFrom-Json
+    $missingContactMetadata.PSObject.Properties.Remove('Contact')
+    Write-Fixture $legacyMetadataPath ($missingContactMetadata | ConvertTo-Json)
+    Assert-Fails { Assert-Destination $expectedCustomDestination $metadata } 'Legacy credit migration must require the project contact.' 'different wallpaper'
+    Write-Fixture $legacyMetadataPath ($legacyMetadata | ConvertTo-Json)
+    Assert-Destination $expectedCustomDestination $metadata
+    Copy-Runtime $expectedCustomDestination
+    Assert-Destination $expectedCustomDestination $metadata
+    $upgradedMetadata = Get-Content -LiteralPath $legacyMetadataPath -Raw | ConvertFrom-Json
+    Assert-Check ($upgradedMetadata.Author -ceq 'gagexhill' -and $upgradedMetadata.License -ceq 'MIT') 'Legacy upgrades must install the approved current credit and license.'
+    Assert-Fails { Assert-Destination $expectedCustomDestination $legacyMetadata } 'The legacy credit exception must not allow reverse migration.' 'different wallpaper'
+    Assert-Check ((Get-Content -LiteralPath $savedSettingsPath -Raw) -ceq '{"preserved":true}') 'Legacy credit upgrades must preserve saved customization.'
+    Assert-Check ((Get-FileHash -LiteralPath (Join-Path $expectedCustomDestination 'LICENSE.txt')).Hash -ceq (Get-FileHash -LiteralPath (Get-RuntimeSource 'LICENSE.txt')).Hash) 'Legacy upgrades must install the project license.'
+    Write-Output 'PASS legacy credit upgrade preserves identity boundaries and customization'
 
     $unknownDestination = Join-Path $fixtureDirectory 'unknown-wallpaper'
     $unknownContentPath = Join-Path $unknownDestination 'existing.txt'

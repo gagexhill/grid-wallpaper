@@ -31,3 +31,10 @@
 
 - Published the Owner-approved public repository after source, branch/tag history, accessible metadata and package review. The Owner accepted the disclosed retained GitHub PR/cache attribution boundary. Enabled native secret scanning, repository push protection and private vulnerability reporting, and required approval for all outside fork contributors while ordinary Actions remain disabled.
 - Verified the unchanged preview-4 ZIP and checksum through unauthenticated downloads and retained the immutable release/tag. Updated the current public-reporting and release procedures; hardware acceptance remains a separate delivery gate.
+
+## 2026-09-14 — Preview installation and release finishing
+
+- Put the supported desktop configuration and preview download before setup, explained ZIP extraction and opening PowerShell, and added expected success, update, ordered removal and public/private help paths. README owns the short user procedure; OPERATIONS.md explains native behavior.
+- Replaced the stale README acceptance list with links to the current laptop evidence and open work. Licensing, trusted distribution and clean-Windows installation now have separate native issues (#18, #19 and #20); the Owner's deferred laptop checks remain in #1.
+- The Owner confirmed personal copyright ownership credited as `gagexhill` and selected MIT licensing. Added the project license and package metadata, and included it in the flat distribution alongside the separate WebView2 redistribution notice. This requires a new preview artifact; earlier immutable packages retain their original contents.
+- Corrected Lively's author/license fields and preserved upgrades from the former credit with a narrow identity check. A setup preview exposed the prior author-equality collision; installer regression coverage now proves migration, collision rejection and saved-customization preservation. Legacy installers cannot downgrade a corrected-credit installation, so the rollback runbook starts with the MIT-licensed previews.

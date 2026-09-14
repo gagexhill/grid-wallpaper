@@ -2,6 +2,7 @@
   "name": "grid-wallpaper",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Offline interactive Canvas wallpaper for Windows and browsers",
   "engines": {
     "node": ">=22"

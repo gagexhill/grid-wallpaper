@@ -15,5 +15,6 @@
   "Microsoft.Web.WebView2.Core.dll",
   "Microsoft.Web.WebView2.WinForms.dll",
   "WebView2Loader.dll",
-  "webview2-license.txt"
+  "webview2-license.txt",
+  "LICENSE.txt"
 ]
