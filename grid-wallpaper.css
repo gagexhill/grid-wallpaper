@@ -99,6 +99,8 @@ details[open] > summary::after { transform: rotate(45deg); }
 .control:last-child { margin-bottom: 0; }
 .control-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; line-height: 1.45; }
 .control label, .control-heading, fieldset legend { font-size: 13px; }
+.dome-mode { display: block; font-size: 11px; font-weight: 400; color: #aaa993; }
+.dome-mode:empty { display: none; }
 output { color: #d5d5c1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 input[type="range"] { appearance: none; display: block; width: 100%; min-height: 48px; margin: 0; padding: 0; border: 0; background: linear-gradient(to right, #c8c8b1 var(--range-progress, 0%), #48483d var(--range-progress, 0%)) center / 100% 4px no-repeat; cursor: pointer; }
 input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: transparent; }

@@ -97,6 +97,7 @@ try {
     Write-Fixture (Join-Path $packageDirectory 'LivelyInfo.json') $metadataText
     Write-Fixture (Join-Path $packageDirectory 'unlisted-note.txt') 'This must never be copied.'
     Write-Fixture (Join-Path $packageDirectory 'windows-host.json') '{"localOnly":"must not be copied"}'
+    Write-Fixture (Join-Path $packageDirectory 'windows-telemetry.js') 'installed-session fixture: must not be copied'
     $module = Import-Module -Name $modulePath -PassThru -Force -DisableNameChecking
     $lively = [pscustomobject]@{ Executable = (Join-Path $fixtureDirectory 'Lively.exe'); DataDirectory = $normalDataDirectory; Store = $false }
     $settingsPath = Join-Path $normalDataDirectory 'Settings.json'
@@ -112,6 +113,7 @@ try {
     Assert-Check ((Get-RuntimeSource 'grid-settings.exe') -ceq $rootHostSource) 'Extracted package files must take precedence over development build output.'
     Assert-Fails { Get-RuntimeSource 'missing-fixture.dll' } 'Missing runtime dependencies must fail clearly.' 'package is incomplete'
     Assert-Check ($runtimeNames -notcontains 'windows-host.json') 'Machine-specific host configuration must never enter the runtime allowlist.'
+    Assert-Check ($runtimeNames -notcontains 'windows-telemetry.js') 'Session telemetry configuration must never enter the runtime allowlist.'
     $packageAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryDirectory 'scripts\package.ps1'), [ref]$parseTokens, [ref]$parseErrors)
     Assert-Check ($parseErrors.Count -eq 0) 'The package script must parse in Windows PowerShell 5.1.'
     $packageFileAssignments = @($packageAst.FindAll({
@@ -124,6 +126,7 @@ try {
             ForEach-Object { $_.Value }
     })
     Assert-Check ($packageLiteralFiles -notcontains 'windows-host.json') 'Machine-specific host configuration must never enter package file additions.'
+    Assert-Check ($packageLiteralFiles -notcontains 'windows-telemetry.js') 'Session telemetry configuration must never enter package file additions.'
     Write-Output 'PASS native runtime source resolution and local configuration exclusion'
 
     $state = Get-LivelyState $lively
@@ -169,6 +172,7 @@ try {
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination 'unlisted-note.txt'))) 'Unlisted source files must be excluded.'
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination 'installer-fixture.psm1'))) 'Test helpers must never be copied.'
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination 'windows-host.json'))) 'A source-machine host configuration must never be copied.'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination 'windows-telemetry.js'))) 'A source-session telemetry bootstrap must never be copied.'
     foreach ($runtimeName in $runtimeNames) {
         Assert-Check ((Get-FileHash -LiteralPath (Join-Path $expectedCustomDestination $runtimeName)).Hash -ceq
             (Get-FileHash -LiteralPath (Get-RuntimeSource $runtimeName)).Hash) ('Installed runtime bytes differ: ' + $runtimeName)

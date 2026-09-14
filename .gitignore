@@ -19,6 +19,7 @@ out/
 credentials.json
 service-account*.json
 windows-host.json
+windows-telemetry.js
 
 # ─── Logs ──────────────────────────────────────────────────────────────────
 *.log

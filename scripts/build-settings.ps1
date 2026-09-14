@@ -93,6 +93,7 @@ foreach ($reference in $references) { $compilerArguments += '/reference:' + (Joi
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.Core.dll')
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.WinForms.dll')
 $compilerArguments += Join-Path $projectDirectory 'windows\settings-window.cs'
+$compilerArguments += Join-Path $projectDirectory 'windows\dome-telemetry.cs'
 & $compiler @compilerArguments
 if ($LASTEXITCODE -ne 0) { throw "The native settings compiler failed with exit code $LASTEXITCODE." }
 Write-Output "Built $executablePath using Microsoft.Web.WebView2 $sdkVersion."

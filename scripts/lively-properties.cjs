@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaults, schema, fpsOptions, mouseModes, hostSettings } = require('../grid-config.js');
+const { defaults, schema, fpsOptions, mouseModes, hostSettings, domePulse } = require('../grid-config.js');
 // Lively requires this native JSON; generate it from the browser's canonical configuration.
 const properties = {
   instructions: { type: 'label', value: 'Changes to these controls are saved automatically by Lively.' }
@@ -23,7 +23,8 @@ for (const [key, value] of Object.entries(defaults)) {
   else if (key === 'mouseMode') properties[key] = { type: 'dropdown', text: 'Mouse interaction', items: mouseModes, value: mouseModes.indexOf(value) };
   else properties[key] = { type: typeof value === 'boolean' ? 'checkbox' : 'color', text: labels[key], value };
 }
-for (const [name, value] of Object.entries({ 'LivelyProperties.json': properties, 'windows-integration.json': hostSettings })) {
+const integration = { ...hostSettings, domeTelemetry: { domeSize: schema.domeSize, pulse: domePulse, maximumCount: schema.count.max } };
+for (const [name, value] of Object.entries({ 'LivelyProperties.json': properties, 'windows-integration.json': integration })) {
   const target = path.join(__dirname, '..', name);
   const output = JSON.stringify(value, null, 2) + '\n';
   if (process.argv.includes('--check')) {
