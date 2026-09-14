@@ -36,6 +36,56 @@ function Get-PackageSha512([string] $Path) {
     finally { $algorithm.Dispose(); $stream.Dispose() }
 }
 
+function ConvertTo-CSharpString([string] $Value) {
+    $literal = New-Object Text.StringBuilder
+    $null = $literal.Append('"')
+    foreach ($character in $Value.ToCharArray()) {
+        $code = [int]$character
+        if ($code -eq 34) { $null = $literal.Append('\"') }
+        elseif ($code -eq 92) { $null = $literal.Append('\\') }
+        elseif ($code -lt 32 -or $code -gt 126) { $null = $literal.Append(('\u{0:x4}' -f $code)) }
+        else { $null = $literal.Append($character) }
+    }
+    $null = $literal.Append('"')
+    $literal.ToString()
+}
+
+$packageMetadata = Get-Content -LiteralPath (Join-Path $projectDirectory 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$wallpaperMetadata = Get-Content -LiteralPath (Join-Path $projectDirectory 'wallpaper\LivelyInfo.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+foreach ($value in @($packageMetadata.version, $packageMetadata.description, $wallpaperMetadata.Title, $wallpaperMetadata.Author)) {
+    if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value) -or $value.Contains([string][char]0)) {
+        throw 'Native product metadata must contain nonempty strings without null characters.'
+    }
+}
+$versionMatch = [regex]::Match($packageMetadata.version, '^(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)(?:-(?<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$')
+if (-not $versionMatch.Success -or @($versionMatch.Groups['pre'].Value.Split('.') | Where-Object { $_ -match '^0[0-9]+$' }).Count -gt 0) {
+    throw 'The package version must be a semantic version.'
+}
+$versionParts = foreach ($part in @('major', 'minor', 'patch')) {
+    $component = 0
+    if (-not [int]::TryParse($versionMatch.Groups[$part].Value, [ref]$component) -or $component -gt 65534) {
+        throw 'Native version components must be between 0 and 65534.'
+    }
+    $component
+}
+# Prerelease/build identifiers remain in ProductVersion; native numeric versions use revision zero.
+$numericVersion = ($versionParts -join '.') + '.0'
+$assemblyAttributes = [ordered]@{
+    AssemblyTitle = $wallpaperMetadata.Title
+    AssemblyProduct = $wallpaperMetadata.Title
+    AssemblyCompany = $wallpaperMetadata.Author
+    AssemblyDescription = $packageMetadata.description
+    AssemblyVersion = $numericVersion
+    AssemblyFileVersion = $numericVersion
+    AssemblyInformationalVersion = $packageMetadata.version
+}
+$assemblyInfoPath = Join-Path $distDirectory 'native-assembly-info.cs'
+if ((Test-Path -LiteralPath $assemblyInfoPath) -and ((Get-Item -LiteralPath $assemblyInfoPath).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Generated native metadata must not be a link.' }
+$assemblyInfo = foreach ($attribute in $assemblyAttributes.Keys) {
+    '[assembly: System.Reflection.' + $attribute + '(' + (ConvertTo-CSharpString $assemblyAttributes[$attribute]) + ')]'
+}
+[IO.File]::WriteAllLines($assemblyInfoPath, [string[]]$assemblyInfo, (New-Object Text.UTF8Encoding($false)))
+
 $packageName = "microsoft.web.webview2.$sdkVersion.nupkg"
 $packagePath = Join-Path $sdkDirectory $packageName
 if (Test-Path -LiteralPath $packagePath) {
@@ -94,6 +144,21 @@ $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.WinForms.dll')
 $compilerArguments += Join-Path $projectDirectory 'windows\settings-window.cs'
 $compilerArguments += Join-Path $projectDirectory 'windows\dome-telemetry.cs'
+$compilerArguments += $assemblyInfoPath
 & $compiler @compilerArguments
 if ($LASTEXITCODE -ne 0) { throw "The native settings compiler failed with exit code $LASTEXITCODE." }
+$fileMetadata = [Diagnostics.FileVersionInfo]::GetVersionInfo($executablePath)
+$expectedMetadata = [ordered]@{
+    ProductName = $wallpaperMetadata.Title
+    CompanyName = $wallpaperMetadata.Author
+    FileDescription = $wallpaperMetadata.Title
+    Comments = $packageMetadata.description
+    ProductVersion = $packageMetadata.version
+    FileVersion = $numericVersion
+}
+foreach ($property in $expectedMetadata.Keys) {
+    if ($fileMetadata.$property -cne $expectedMetadata[$property]) { throw "The native executable metadata failed readback verification: $property." }
+}
+if ([Reflection.AssemblyName]::GetAssemblyName($executablePath).Version.ToString() -cne $numericVersion) { throw 'The native assembly version failed readback verification.' }
 Write-Output "Built $executablePath using Microsoft.Web.WebView2 $sdkVersion."
+Write-Output "Verified native metadata: $($fileMetadata.ProductName), $($fileMetadata.CompanyName), product $($fileMetadata.ProductVersion), file/assembly $numericVersion."
