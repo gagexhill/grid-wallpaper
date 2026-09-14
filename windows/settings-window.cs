@@ -48,6 +48,8 @@ internal static class SettingsProgram
         {
             int result = SettingsData.SelfTest();
             if (result == 0) result = SettingsGeometry.SelfTest();
+            if (result == 0) result = SettingsInteraction.SelfTest();
+            if (result == 0) result = DomeTelemetry.SelfTest();
             return result == 0 ? LauncherVisuals.SelfTest() : result;
         }
         string executable = Path.GetFullPath(Application.ExecutablePath);
@@ -103,7 +105,7 @@ internal static class SettingsProgram
     internal static void MarkWindow(IntPtr window) { SetProp(window, WindowMarker, new IntPtr(1)); }
     internal static void UnmarkWindow(IntPtr window)
     {
-        foreach (string suffix in new string[] { "", "Ready", "Suspended", "Radius", "Region", "Panel", "Launcher", "Dragging", "InteractiveMicros", "OpenSequence", "InteractiveSequence" }) RemoveProp(window, WindowMarker + suffix);
+        foreach (string suffix in new string[] { "", "Ready", "Suspended", "Radius", "Region", "Panel", "Launcher", "Dragging", "InteractiveMicros", "OpenSequence", "InteractiveSequence", "TelemetryAvailable", "TelemetryConnected", "TelemetryStreaming" }) RemoveProp(window, WindowMarker + suffix);
     }
 
     internal static void SetWindowState(IntPtr window, bool ready, bool suspended, double radius, bool region)
@@ -154,6 +156,12 @@ internal static class SettingsProgram
             inputToInteractiveMilliseconds = Metric(window, "InteractiveMicros").ToInt64() / 1000d,
             openSequence = Metric(window, "OpenSequence").ToInt64(),
             interactiveSequence = Metric(window, "InteractiveSequence").ToInt64(),
+            telemetry = new
+            {
+                available = Metric(window, "TelemetryAvailable") == new IntPtr(1),
+                connected = Metric(window, "TelemetryConnected") == new IntPtr(1),
+                streaming = Metric(window, "TelemetryStreaming") == new IntPtr(1)
+            },
             launcher = new
             {
                 visible = launcher != IntPtr.Zero && IsWindowVisible(launcher),
@@ -488,6 +496,7 @@ internal sealed class DesktopLauncher : Form
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct Blend { internal byte Operation, Flags, Alpha, Format; }
     [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowCallback callback, IntPtr parameter);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
@@ -523,22 +532,30 @@ internal sealed class DesktopLauncher : Form
     internal static bool IsShellOwned(IntPtr window) { return GetWindow(window, 4) == GetShellWindow(); }
     private readonly LauncherVisuals visuals;
     private readonly IntPtr statusWindow;
+    private readonly IntPtr companionPanel;
     private readonly double scale;
     private readonly Action<Point, long> toggle;
+    private readonly Action<Point> moved;
+    private readonly Action<IntPtr> deactivated;
     private readonly System.Windows.Forms.Timer animation = new System.Windows.Forms.Timer();
     private readonly IntPtr[] bitmaps = new IntPtr[6];
     private bool pressed, dragging, releasing;
     private bool keyPressed;
     private Point downScreen, downWindow;
     private int frame, targetFrame;
-    private bool animationsEnabled = true;
+    private bool snapping;
+    private Point snapStart, snapTarget;
+    private long snapStarted;
     private bool snappedRight = true;
+    private bool initialized;
     private double normalizedY;
     private readonly string positionFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Grid Wallpaper", "launcher-position.json");
 
-    internal DesktopLauncher(LauncherVisuals images, double displayScale, IntPtr status, Action<Point, long> onClick)
+    internal DesktopLauncher(LauncherVisuals images, double displayScale, IntPtr status, Action<Point, long> onClick,
+        Action<Point> onMove, Action<IntPtr> onDeactivate, IntPtr panelWindow)
     {
-        visuals = images; scale = displayScale; statusWindow = status; toggle = onClick;
+        visuals = images; scale = displayScale; statusWindow = status; toggle = onClick; moved = onMove; deactivated = onDeactivate;
+        companionPanel = panelWindow;
         Text = "Grid Wallpaper Settings Button";
         AccessibleName = Text;
         AccessibleDescription = "Open wallpaper settings. Drag to move the button. Press Enter or Space to open settings.";
@@ -552,12 +569,11 @@ internal sealed class DesktopLauncher : Form
         ReadPosition();
         for (int i = 0; i < bitmaps.Length; i++) bitmaps[i] = visuals.Frames[i].GetHbitmap(Color.FromArgb(0));
         animation.Interval = 16;
-        animation.Tick += delegate { frame += Math.Sign(targetFrame - frame); PaintFrame(); if (frame == targetFrame) animation.Stop(); };
+        animation.Tick += delegate { AdvanceAnimation(); };
         Deactivate += delegate { if (keyPressed) { keyPressed = false; AnimateTo(0); } if (!pressed) LowerToDesktop(); };
         Shown += delegate { SetShellOwner(); PaintFrame(); LowerToDesktop(); };
         FormClosed += delegate
         {
-            animation.Dispose();
             foreach (IntPtr bitmap in bitmaps) if (bitmap != IntPtr.Zero) DeleteObject(bitmap);
             visuals.Dispose();
             SettingsProgram.SetMetric(statusWindow, "Launcher", 0);
@@ -567,6 +583,13 @@ internal sealed class DesktopLauncher : Form
         SetShellOwner();
         SettingsProgram.SetMetric(statusWindow, "Launcher", Handle.ToInt64());
         Show();
+        initialized = true;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { snapping = false; animation.Dispose(); }
+        base.Dispose(disposing);
     }
 
     protected override bool ShowWithoutActivation { get { return true; } }
@@ -585,7 +608,11 @@ internal sealed class DesktopLauncher : Form
     {
         if (message.Msg == 0x21) { message.Result = new IntPtr(1); return; }
         bool desktopChanged = message.Msg == 0x7E || message.Msg == 0x1A;
+        bool lostActivation = message.Msg == 0x6 && (message.WParam.ToInt64() & 0xffff) == 0;
+        IntPtr activatedWindow = message.LParam;
+        if (desktopChanged || lostActivation || message.Msg == 0x1F) CancelSnap();
         base.WndProc(ref message);
+        if (lostActivation && initialized) deactivated(activatedWindow);
         if (desktopChanged && visuals != null && IsHandleCreated)
         {
             if (pressed) FinishCapture();
@@ -601,6 +628,7 @@ internal sealed class DesktopLauncher : Form
     }
     protected override void OnMouseDown(MouseEventArgs e)
     {
+        CancelSnap();
         base.OnMouseDown(e);
         if (e.Button != MouseButtons.Left || pressed) return;
         Activate();
@@ -615,12 +643,13 @@ internal sealed class DesktopLauncher : Form
         int dx = cursor.X - downScreen.X, dy = cursor.Y - downScreen.Y;
         if (!dragging && Math.Sqrt((double)dx * dx + (double)dy * dy) >= 6 * scale) dragging = true;
         if (!dragging) return;
-        Location = Clamp(new Point(downWindow.X + dx, downWindow.Y + dy));
+        MoveLauncher(Clamp(new Point(downWindow.X + dx, downWindow.Y + dy)));
         SettingsProgram.SetMetric(statusWindow, "Dragging", 1);
         PaintFrame();
     }
     protected override void OnMouseUp(MouseEventArgs e)
     {
+        CancelSnap();
         base.OnMouseUp(e);
         if (e.Button != MouseButtons.Left || !pressed) return;
         long input = Stopwatch.GetTimestamp();
@@ -633,18 +662,25 @@ internal sealed class DesktopLauncher : Form
     protected override void OnMouseCaptureChanged(EventArgs e)
     {
         base.OnMouseCaptureChanged(e);
-        if (pressed && !Capture && !releasing) { FinishCapture(); Snap(); SavePosition(); LowerToDesktop(); }
+        if (pressed && !Capture && !releasing) { FinishCapture(); Snap(false); SavePosition(); LowerToDesktop(); }
+    }
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        CancelSnap();
+        base.OnMouseWheel(e);
     }
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        CancelSnap();
         base.OnKeyDown(e);
         if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space)
         { e.Handled = true; e.SuppressKeyPress = true; if (!keyPressed) { keyPressed = true; AnimateTo(5); } }
         else if (e.KeyCode == Keys.Escape && pressed)
-        { FinishCapture(); Location = downWindow; PaintFrame(); LowerToDesktop(); e.Handled = true; }
+        { FinishCapture(); MoveLauncher(downWindow); PaintFrame(); LowerToDesktop(); e.Handled = true; }
     }
     protected override void OnKeyUp(KeyEventArgs e)
     {
+        CancelSnap();
         base.OnKeyUp(e);
         if ((e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space) && keyPressed)
         { keyPressed = false; AnimateTo(0); LowerToDesktop(); toggle(ButtonAnchor(), Stopwatch.GetTimestamp()); e.Handled = true; }
@@ -656,7 +692,7 @@ internal sealed class DesktopLauncher : Form
         internal LauncherAccessibility(DesktopLauncher owner) : base(owner) { launcher = owner; }
         public override string DefaultAction { get { return "Open settings"; } }
         public override AccessibleRole Role { get { return AccessibleRole.PushButton; } }
-        public override void DoDefaultAction() { launcher.toggle(launcher.ButtonAnchor(), Stopwatch.GetTimestamp()); }
+        public override void DoDefaultAction() { launcher.CancelSnap(); launcher.toggle(launcher.ButtonAnchor(), Stopwatch.GetTimestamp()); }
     }
     private void FinishCapture()
     {
@@ -669,33 +705,66 @@ internal sealed class DesktopLauncher : Form
         return new Point(Math.Max(area.Left + visuals.Gap, Math.Min(value.X, area.Right - Width - visuals.Gap)),
             Math.Max(area.Top + visuals.Gap, Math.Min(value.Y, area.Bottom - Height - visuals.Gap)));
     }
-    private void Snap()
+    private void Snap(bool animate = true)
     {
+        CancelSnap();
         Rectangle area = Screen.PrimaryScreen.WorkingArea;
         snappedRight = Left + Width / 2 >= area.Left + area.Width / 2;
-        Location = Clamp(new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap, Top));
-        normalizedY = Math.Max(0, Math.Min(1, (Top - area.Top - visuals.Gap) / (double)Math.Max(1, area.Height - Height - 2 * visuals.Gap)));
+        snapTarget = Clamp(new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap, Top));
+        normalizedY = Math.Max(0, Math.Min(1, (snapTarget.Y - area.Top - visuals.Gap) / (double)Math.Max(1, area.Height - Height - 2 * visuals.Gap)));
+        if (!animate || !ClientAnimationsEnabled() || Location == snapTarget)
+        {
+            MoveLauncher(snapTarget);
+            PaintFrame();
+            return;
+        }
+        snapStart = Location;
+        snapStarted = Stopwatch.GetTimestamp();
+        snapping = true;
+        animation.Start();
+    }
+    private void CancelSnap()
+    {
+        snapping = false;
+        if (frame == targetFrame) animation.Stop();
+    }
+    private void AdvanceAnimation()
+    {
+        frame += Math.Sign(targetFrame - frame);
+        if (snapping)
+        {
+            double elapsed = (Stopwatch.GetTimestamp() - snapStarted) * 1000d / Stopwatch.Frequency;
+            MoveLauncher(SettingsGeometry.SnapPosition(snapStart, snapTarget, elapsed));
+            if (elapsed >= SettingsGeometry.SnapDurationMilliseconds) snapping = false;
+        }
         PaintFrame();
+        if (!snapping && frame == targetFrame) animation.Stop();
     }
     private void PlaceFromPreference()
     {
         Rectangle area = Screen.PrimaryScreen.WorkingArea;
-        Location = Clamp(new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap,
-            area.Top + visuals.Gap + (int)Math.Round(normalizedY * Math.Max(0, area.Height - Height - 2 * visuals.Gap))));
+        MoveLauncher(Clamp(new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap,
+            area.Top + visuals.Gap + (int)Math.Round(normalizedY * Math.Max(0, area.Height - Height - 2 * visuals.Gap)))));
+    }
+    private void MoveLauncher(Point position)
+    {
+        Location = position;
+        if (initialized) moved(ButtonAnchor());
     }
     private Point ButtonAnchor()
     {
-        Rectangle screen = Screen.PrimaryScreen.Bounds;
-        return new Point(Math.Max(0, Math.Min(SettingsGeometry.CoordinateScale, (int)Math.Round((Left + Width / 2d - screen.Left) / screen.Width * SettingsGeometry.CoordinateScale))),
-            Math.Max(0, Math.Min(SettingsGeometry.CoordinateScale, (int)Math.Round((Top + Height / 2d - screen.Top) / screen.Height * SettingsGeometry.CoordinateScale))));
+        return SettingsGeometry.AnchorAtCenter(Screen.PrimaryScreen.Bounds, Bounds);
     }
     private void AnimateTo(int value)
     {
-        bool enabled;
-        animationsEnabled = !SystemParametersInfo(0x1042, 0, out enabled, 0) || enabled;
         targetFrame = value;
-        if (!animationsEnabled) { animation.Stop(); targetFrame = frame = 0; PaintFrame(); }
+        if (!ClientAnimationsEnabled()) { CancelSnap(); animation.Stop(); targetFrame = frame = 0; PaintFrame(); }
         else if (frame != targetFrame) animation.Start();
+    }
+    private static bool ClientAnimationsEnabled()
+    {
+        bool enabled;
+        return !SystemParametersInfo(0x1042, 0, out enabled, 0) || enabled;
     }
     private void PaintFrame()
     {
@@ -715,6 +784,11 @@ internal sealed class DesktopLauncher : Form
     private void LowerToDesktop()
     {
         if (!IsHandleCreated || IsDisposed || pressed) return;
+        if (companionPanel != IntPtr.Zero && IsWindowVisible(companionPanel))
+        {
+            PlaceAbove(companionPanel);
+            return;
+        }
         IntPtr shell = GetShellWindow();
         if (shell == IntPtr.Zero) return;
         IntPtr desktop = shell;
@@ -724,7 +798,12 @@ internal sealed class DesktopLauncher : Form
             desktop = window;
             return false;
         }, IntPtr.Zero);
-        IntPtr preceding = GetWindow(desktop, 3);
+        PlaceAbove(desktop);
+    }
+    internal void RestoreStack() { LowerToDesktop(); }
+    private void PlaceAbove(IntPtr window)
+    {
+        IntPtr preceding = GetWindow(window, 3);
         if (preceding != Handle) SetWindowPos(Handle, preceding, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x200);
     }
     private void SetShellOwner()
@@ -773,6 +852,7 @@ internal sealed class DesktopLauncher : Form
 internal static class SettingsGeometry
 {
     internal const int CoordinateScale = 1000000;
+    internal const int SnapDurationMilliseconds = 90;
     internal static readonly Point DefaultAnchor = new Point(980000, 40000);
 
     internal static bool TryParseUri(string scheme, string value, out Point anchor)
@@ -802,6 +882,21 @@ internal static class SettingsGeometry
             Math.Max(workArea.Top + gap, Math.Min(y, workArea.Bottom - panel.Height - gap)));
     }
 
+    internal static Point AnchorAtCenter(Rectangle screen, Rectangle launcher)
+    {
+        if (screen.Width <= 0 || screen.Height <= 0) throw new SettingsFailure("The primary display geometry is invalid.");
+        return new Point(Math.Max(0, Math.Min(CoordinateScale, (int)Math.Round((launcher.Left + launcher.Width / 2d - screen.Left) / screen.Width * CoordinateScale))),
+            Math.Max(0, Math.Min(CoordinateScale, (int)Math.Round((launcher.Top + launcher.Height / 2d - screen.Top) / screen.Height * CoordinateScale))));
+    }
+
+    internal static Point SnapPosition(Point start, Point target, double elapsedMilliseconds)
+    {
+        double remaining = 1 - Math.Max(0, Math.Min(1, elapsedMilliseconds / SnapDurationMilliseconds));
+        double progress = 1 - remaining * remaining * remaining;
+        return new Point(start.X + (int)Math.Round((target.X - (double)start.X) * progress),
+            start.Y + (int)Math.Round((target.Y - (double)start.Y) * progress));
+    }
+
     internal static int SelfTest()
     {
         Point anchor;
@@ -820,6 +915,69 @@ internal static class SettingsGeometry
         if (Position(screen, area, panel, new Point(0, 0), 20) != new Point(20, 20)) return 25;
         if (Position(screen, area, panel, new Point(CoordinateScale, CoordinateScale), 20) != new Point(1450, 245)) return 26;
         try { Position(screen, area, panel, new Point(-1, 0), 20); return 27; } catch (SettingsFailure) { }
+        if (Position(screen, area, panel, AnchorAtCenter(screen, new Rectangle(1840, 20, 60, 60)), 20) != new Point(1420, 50)) return 28;
+        if (Position(screen, area, panel, AnchorAtCenter(screen, new Rectangle(1000, 120, 60, 60)), 20) != new Point(580, 150)) return 29;
+        if (Position(screen, area, panel, AnchorAtCenter(screen, new Rectangle(20, 800, 60, 60)), 20) != new Point(20, 245)) return 34;
+        Rectangle smallerArea = new Rectangle(0, 0, 1600, 600);
+        if (Position(screen, smallerArea, new Size(450, 560), AnchorAtCenter(screen, new Rectangle(1520, 500, 60, 60)), 20) != new Point(1100, 20)) return 35;
+        Point snapStart = new Point(820, 200), snapTarget = new Point(20, 200);
+        if (SnapPosition(snapStart, snapTarget, -1) != snapStart || SnapPosition(snapStart, snapTarget, 0) != snapStart) return 36;
+        if (SnapPosition(snapStart, snapTarget, 45) != new Point(120, 200)) return 37;
+        if (SnapPosition(snapStart, snapTarget, 90) != snapTarget || SnapPosition(snapStart, snapTarget, 180) != snapTarget) return 38;
+        if (SnapPosition(snapTarget, snapStart, 45) != new Point(720, 200)) return 39;
+        return 0;
+    }
+}
+
+internal static class SettingsInteraction
+{
+    [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
+    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+
+    internal static void MoveWithoutActivation(IntPtr window, Point position)
+    {
+        SetWindowPos(window, IntPtr.Zero, position.X, position.Y, 0, 0, 0x1 | 0x4 | 0x10 | 0x200);
+    }
+
+    internal static bool Contains(IntPtr candidate, IntPtr panel, IntPtr launcher)
+    {
+        return Contains(candidate, panel, launcher, delegate(IntPtr window) { return GetAncestor(window, 2); },
+            delegate(IntPtr window) { return GetWindow(window, 4); });
+    }
+
+    private static bool Contains(IntPtr candidate, IntPtr panel, IntPtr launcher, Func<IntPtr, IntPtr> root, Func<IntPtr, IntPtr> owner)
+    {
+        // Include children and owned popups, but never treat the launcher's shell owner as part of the settings UI.
+        for (int depth = 0; candidate != IntPtr.Zero && depth < 16; depth++)
+        {
+            if (candidate == panel || candidate == launcher) return true;
+            IntPtr top = root(candidate);
+            if (top == IntPtr.Zero) return false;
+            if (top == panel || top == launcher) return true;
+            candidate = owner(top);
+        }
+        return false;
+    }
+
+    internal static int SelfTest()
+    {
+        Func<IntPtr, IntPtr> root = delegate(IntPtr window)
+        {
+            long id = window.ToInt64();
+            return new IntPtr(id == 11 ? 10 : id == 21 ? 20 : id == 31 ? 30 : id == 99 ? 0 : id);
+        };
+        Func<IntPtr, IntPtr> owner = delegate(IntPtr window)
+        {
+            long id = window.ToInt64();
+            return new IntPtr(id == 12 ? 11 : id == 13 ? 12 : id == 20 ? 30 : id == 40 ? 41 : id == 41 ? 40 : 0);
+        };
+        foreach (int inside in new int[] { 10, 11, 12, 13, 20, 21 })
+            if (!Contains(new IntPtr(inside), new IntPtr(10), new IntPtr(20), root, owner)) return 40;
+        foreach (int outside in new int[] { 0, 30, 31, 40, 41, 50, 99 })
+            if (Contains(new IntPtr(outside), new IntPtr(10), new IntPtr(20), root, owner)) return 41;
+        Console.WriteLine("Settings activation-group validation passed.");
         return 0;
     }
 }
@@ -1147,6 +1305,7 @@ internal sealed class SettingsWindow : Form
     private string saveFailure;
     private Task<bool> savingTask;
     private DesktopLauncher launcher;
+    private DomeTelemetry telemetry;
     private long openStarted;
     private int openSequence;
     internal event Action ShutdownCancelled;
@@ -1183,6 +1342,7 @@ internal sealed class SettingsWindow : Form
         FormClosing += CloseSafely;
         FormClosed += delegate
         {
+            if (telemetry != null) { telemetry.Dispose(); telemetry = null; }
             timer.Dispose();
             hiddenSuspend.Dispose();
             if (launcher != null) { launcher.Close(); launcher.Dispose(); }
@@ -1192,6 +1352,18 @@ internal sealed class SettingsWindow : Form
         };
         // Create a discoverable native HWND before asynchronous startup, without showing a blank window.
         CreateHandle();
+        try
+        {
+            telemetry = new DomeTelemetry(installDirectory, ReceiveDomeState);
+            telemetry.Start();
+        }
+        catch (Exception error)
+        {
+            if (!(error is IOException || error is UnauthorizedAccessException || error is System.Net.HttpListenerException
+                || error is ArgumentException || error is InvalidOperationException || error is System.Security.SecurityException)) throw;
+            if (telemetry != null) telemetry.Dispose();
+            telemetry = null;
+        }
         BeginInvoke(new Action(async delegate { await InitializeBrowser(); }));
     }
 
@@ -1212,7 +1384,11 @@ internal sealed class SettingsWindow : Form
     protected override void WndProc(ref Message message)
     {
         if (message.Msg == 0x10 && shutdown != null && shutdown.WaitOne(0)) shuttingDown = true;
+        bool lostActivation = message.Msg == 0x6 && (message.WParam.ToInt64() & 0xffff) == 0;
+        IntPtr activatedWindow = message.LParam;
         base.WndProc(ref message);
+        if (lostActivation) SurfaceDeactivated(activatedWindow);
+        else if (message.Msg == 0x6 && launcher != null && !launcher.IsDisposed) launcher.RestoreStack();
     }
 
     private void QueueUI(Action action)
@@ -1227,7 +1403,9 @@ internal sealed class SettingsWindow : Form
         Size fitted = new Size(Math.Max(1, Math.Min((int)Math.Round(360 * displayScale), screen.WorkingArea.Width - displayGap * 2)),
             Math.Max(1, Math.Min((int)Math.Round(700 * displayScale), screen.WorkingArea.Height - displayGap * 2)));
         if (ClientSize != fitted) { ClientSize = fitted; if (ready) UpdateRegion(); }
-        Location = SettingsGeometry.Position(screen.Bounds, screen.WorkingArea, Size, anchor, displayGap);
+        Point position = SettingsGeometry.Position(screen.Bounds, screen.WorkingArea, Size, anchor, displayGap);
+        if (IsHandleCreated) SettingsInteraction.MoveWithoutActivation(Handle, position);
+        else Location = position;
     }
 
     private void UpdateRegion()
@@ -1260,6 +1438,9 @@ internal sealed class SettingsWindow : Form
 
     private void PublishState()
     {
+        SettingsProgram.SetMetric(statusWindow, "TelemetryAvailable", telemetry != null ? 1 : 0);
+        SettingsProgram.SetMetric(statusWindow, "TelemetryConnected", telemetry != null && telemetry.Connected ? 1 : 0);
+        SettingsProgram.SetMetric(statusWindow, "TelemetryStreaming", telemetry != null && telemetry.Streaming ? 1 : 0);
         if (IsHandleCreated && !IsDisposed)
             SettingsProgram.SetWindowState(statusWindow, ready, suspended, cornerRadius * displayScale, Region != null);
     }
@@ -1324,7 +1505,7 @@ internal sealed class SettingsWindow : Form
             string file = Path.GetFileName(uri.LocalPath);
             allowed = SettingsData.SamePath(Path.GetDirectoryName(uri.LocalPath), installDirectory)
                 && (file == "grid-wallpaper.html" || file == "grid-wallpaper.css" || file == "grid-wallpaper.js"
-                    || file == "grid-config.js" || file == "grid-settings.js" || file == "grid-native-settings.js");
+                    || file == "grid-config.js" || file == "grid-settings.js" || file == "grid-native-settings.js" || file == "grid-live-telemetry.js");
         }
         if (!allowed) e.Response = browser.CoreWebView2.Environment.CreateWebResourceResponse(Stream.Null, 403, "Blocked", "Content-Type: text/plain");
     }
@@ -1351,15 +1532,22 @@ internal sealed class SettingsWindow : Form
                 object launcherValue;
                 if (!message.TryGetValue("launcher", out launcherValue)) throw new SettingsFailure("The desktop settings button is missing.");
                 LauncherVisuals images = LauncherVisuals.Parse(launcherValue, displayScale);
-                try { launcher = new DesktopLauncher(images, displayScale, statusWindow, TogglePanel); }
+                try { launcher = new DesktopLauncher(images, displayScale, statusWindow, TogglePanel, FollowLauncher, SurfaceDeactivated, Handle); }
                 catch { images.Dispose(); throw; }
                 ready = true;
                 UpdateRegion();
-                Post(new { kind = "init", properties = data.Properties });
+                Post(new { kind = "init", properties = data.Properties, telemetryAvailable = telemetry != null });
                 if (openRequested) ShowPanel();
                 else ScheduleSuspend();
             }
             else if (Object.Equals(kind, "close")) HidePanel();
+            else if (Object.Equals(kind, "observe-domes") && ready)
+            {
+                object active;
+                if (message.Count != 2 || !message.TryGetValue("active", out active) || !(active is bool)) return;
+                if (telemetry != null) telemetry.SetStreaming((bool)active && Visible && openRequested && !shuttingDown);
+                PublishState();
+            }
             else if (Object.Equals(kind, "interactive"))
             {
                 object sequence;
@@ -1410,10 +1598,42 @@ internal sealed class SettingsWindow : Form
         }
     }
 
+    private void FollowLauncher(Point requestedAnchor)
+    {
+        anchor = requestedAnchor;
+        if (Visible && openRequested && ready && !shuttingDown && !browserFailed) PositionPanel();
+    }
+
+    private void ReceiveDomeState(Dictionary<string, object> state)
+    {
+        QueueUI(delegate
+        {
+            PublishState();
+            if (ready && Visible && openRequested && !browserFailed && !shuttingDown)
+                Post(new { kind = "dome-state", state = state });
+        });
+    }
+
+    private void SurfaceDeactivated(IntPtr activatedWindow)
+    {
+        if (!Visible || !openRequested || shuttingDown || IsDisposed) return;
+        IntPtr launcherWindow = launcher == null || launcher.IsDisposed ? IntPtr.Zero : launcher.Handle;
+        if (SettingsInteraction.Contains(activatedWindow, Handle, launcherWindow)) return;
+        int epoch = visibilityEpoch;
+        // Deactivation is delivered before activation on the same input queue. Check once after that transition settles.
+        QueueUI(delegate
+        {
+            if (!Visible || !openRequested || shuttingDown || epoch != visibilityEpoch) return;
+            IntPtr currentLauncher = launcher == null || launcher.IsDisposed ? IntPtr.Zero : launcher.Handle;
+            if (!SettingsInteraction.Contains(SettingsInteraction.GetForegroundWindow(), Handle, currentLauncher)) HidePanel();
+        });
+    }
+
     internal void StopForInstaller() { RequestShutdown(); }
     internal void StopForWallpaperChange() { hostChanged = true; RetireSurface(); RequestShutdown(); }
     private void RetireSurface()
     {
+        if (telemetry != null) { telemetry.Dispose(); telemetry = null; }
         if (launcher != null) launcher.Hide();
         openRequested = false;
         openStarted = 0;
@@ -1452,6 +1672,7 @@ internal sealed class SettingsWindow : Form
             Show();
             Activate();
             SettingsProgram.SetForegroundWindow(Handle);
+            if (launcher != null && !launcher.IsDisposed) launcher.RestoreStack();
             everOpened = true;
             PublishState();
             if (openSequence > 0) Post(new { kind = "shown", sequence = openSequence });
@@ -1462,6 +1683,7 @@ internal sealed class SettingsWindow : Form
 
     private void HidePanel()
     {
+        if (telemetry != null) telemetry.SetStreaming(false);
         visibilityEpoch++;
         openRequested = false;
         openStarted = 0;
@@ -1469,6 +1691,7 @@ internal sealed class SettingsWindow : Form
         Post(new { kind = "hidden" });
         browser.Visible = false;
         Hide();
+        if (launcher != null && !launcher.IsDisposed) launcher.RestoreStack();
         if (shuttingDown) return;
         if (!saving && pending.Count > 0) { timer.Stop(); savingTask = SavePending(); }
         else if (!saving) ScheduleSuspend();
@@ -1485,7 +1708,7 @@ internal sealed class SettingsWindow : Form
         try
         {
             await Task.Run(delegate { data.ReloadProperties(); });
-            if (!IsDisposed && !shuttingDown) Post(new { kind = "init", properties = data.Properties });
+            if (!IsDisposed && !shuttingDown) Post(new { kind = "init", properties = data.Properties, telemetryAvailable = telemetry != null });
         }
         catch (Exception error)
         {
@@ -1588,6 +1811,7 @@ internal sealed class SettingsWindow : Form
     private void RequestShutdown()
     {
         if (IsDisposed || shuttingDown) return;
+        if (telemetry != null) telemetry.SetStreaming(false);
         shuttingDown = true;
         Close();
     }
@@ -1609,6 +1833,7 @@ internal sealed class SettingsWindow : Form
         if (!shuttingDown) { HidePanel(); return; }
         if (shutdownClosing) return;
         shutdownClosing = true;
+        if (telemetry != null) telemetry.SetStreaming(false);
         timer.Stop();
         Post(new { kind = "closing" });
         bool success = saving && savingTask != null ? await savingTask : true;

@@ -11,6 +11,7 @@ const sources = ['grid-config.js', 'grid-wallpaper.js'].map(name => ({
   name,
   source: fs.readFileSync(path.join(root, name), 'utf8')
 }));
+const telemetrySource = fs.readFileSync(path.join(root, 'grid-live-telemetry.js'), 'utf8');
 
 function eventTarget() {
   const listeners = new Map();
@@ -40,6 +41,8 @@ function createRuntime(options = {}) {
   const timers = new Map();
   const storage = new Map(options.storage || []);
   const writes = [];
+  const scripts = [];
+  const sockets = [];
   const math = Object.create(Math);
   math.random = () => {
     seed = (1664525 * seed + 1013904223) >>> 0;
@@ -72,7 +75,10 @@ function createRuntime(options = {}) {
     visibilityState: 'visible',
     getElementById: id => id === 'c' ? canvas : id === 'vignette' ? vignette : null,
     documentElement: Object.assign(eventTarget(), { style: {} }),
-    body: { style: {} }
+    body: { style: {} },
+    baseURI: 'file:///wallpapers/grid%20wallpaper/grid-wallpaper.html',
+    head: { appendChild(script) { scripts.push(script); } },
+    createElement: () => ({ remove() { this.removed = true; } })
   });
   const sandbox = Object.assign(eventTarget(), {
     document,
@@ -81,6 +87,22 @@ function createRuntime(options = {}) {
     innerWidth: 320,
     innerHeight: 180,
     devicePixelRatio: 1,
+    screen: { availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1040 },
+    GridSettingsWindow: !!options.settingsWindow,
+    chrome: options.webView2 ? { webview: {} } : undefined,
+    URL,
+    WebSocket: class {
+      static OPEN = 1;
+      constructor(url, protocols) {
+        this.url = url; this.protocols = protocols; this.sent = [];
+        this.readyState = 0; this.bufferedAmount = 0; sockets.push(this);
+      }
+      send(message) { this.sent.push(JSON.parse(message)); }
+      close() { this.readyState = 3; this.closed = true; }
+      open() { this.readyState = 1; this.onopen?.(); }
+      message(message) { this.onmessage?.({ data: JSON.stringify(message) }); }
+      disconnect() { this.readyState = 3; this.onclose?.(); }
+    },
     performance: { now: () => now },
     matchMedia: () => reducedMotion,
     requestAnimationFrame(callback) {
@@ -140,6 +162,21 @@ function createRuntime(options = {}) {
     api: sandbox.GridWallpaper,
     storage,
     writes,
+    scripts,
+    sockets,
+    loadTelemetry() { vm.runInContext(telemetrySource, environment, { filename: 'grid-live-telemetry.js' }); },
+    runTimers(elapsed) {
+      now += elapsed;
+      for (let pass = 0; pass < 100; pass++) {
+        const ready = [...timers.entries()].filter(([, timer]) => timer.due <= now);
+        if (!ready.length) return;
+        for (const [id, timer] of ready) {
+          if (timers.delete(id)) timer.callback();
+        }
+      }
+      assert.fail('Timers did not settle within the bounded test window');
+    },
+    get pendingTimers() { return timers.size; },
     step,
     flushTimers,
     advance(elapsed) { now += elapsed; },
@@ -406,4 +443,214 @@ test('native dropdown indices and individual dome properties use supported value
   assertValidConfig(runtime);
   runtime.paint();
   assert.equal(runtime.queued, 0);
+});
+
+test('live dome state follows rendered pulses without changing configuration or scheduling another frame loop', () => {
+  const runtime = createRuntime();
+  runtime.api.update({ autoSize: true, fpsLimit: 60 });
+  const config = plain(runtime.api.getConfig());
+  const writes = runtime.writes.length;
+  const states = [];
+  const unsubscribe = runtime.api.subscribeDomeState(state => states.push(plain(state)));
+  assert.equal(states[0], null, 'No size is invented before the first render');
+  runtime.step(0);
+  const first = runtime.api.getDomeState();
+  for (let frame = 0; frame < 20; frame++) {
+    runtime.step(20);
+    assert.equal(runtime.queued, 1);
+  }
+  const last = runtime.api.getDomeState();
+  assert.ok(last.sequence > first.sequence);
+  assert.notDeepEqual(plain(last.sizes), plain(first.sizes));
+  assert.equal(states.filter(Boolean).length, runtime.paints);
+  for (const state of states.filter(Boolean)) {
+    assert.equal(state.autoSize, true);
+    assert.equal(state.paused, false);
+    assert.deepEqual(state.bases, config.domeSizes.slice(0, config.count));
+    state.sizes.forEach((size, index) => {
+      assert.ok(size >= state.bases[index] * runtime.window.GridConfig.domePulse.min);
+      assert.ok(size <= state.bases[index] * runtime.window.GridConfig.domePulse.max);
+    });
+  }
+  last.sizes[0] = 999;
+  assert.notEqual(runtime.api.getDomeState().sizes[0], 999);
+  assert.deepEqual(plain(runtime.api.getConfig()), config);
+  assert.equal(runtime.writes.length, writes);
+  unsubscribe();
+  const notifications = states.length;
+  runtime.paint();
+  assert.equal(states.length, notifications);
+  assert.equal(runtime.queued, 1);
+});
+
+test('frozen and paused telemetry retains the last real size and never animates independently', () => {
+  const runtime = createRuntime();
+  runtime.api.update({ autoSize: true });
+  runtime.paint();
+  const rendered = plain(runtime.api.getDomeState().sizes);
+  runtime.playback(true);
+  assert.equal(runtime.api.getDomeState().paused, true);
+  runtime.advance(60_000);
+  runtime.paint();
+  assert.deepEqual(plain(runtime.api.getDomeState().sizes), rendered);
+  assert.equal(runtime.queued, 0);
+  runtime.playback(false);
+  runtime.api.update({ snapshot: true });
+  runtime.paint();
+  const frozen = plain(runtime.api.getDomeState().sizes);
+  assert.equal(runtime.api.getDomeState().paused, true);
+  runtime.paint();
+  assert.deepEqual(plain(runtime.api.getDomeState().sizes), frozen);
+  assert.equal(runtime.queued, 0);
+  runtime.api.update({ snapshot: false });
+  runtime.paint();
+  runtime.visibility(true);
+  assert.equal(runtime.api.getDomeState().paused, true);
+  assert.equal(runtime.queued, 0);
+  runtime.visibility(false);
+  runtime.paint();
+  assert.equal(runtime.api.getDomeState().paused, false);
+  runtime.api.update({ autoSize: false });
+  assert.equal(runtime.api.getDomeState(), null, 'Configuration changes invalidate the preceding frame');
+  runtime.paint();
+  assert.deepEqual(plain(runtime.api.getDomeState().sizes), plain(runtime.api.getDomeState().bases));
+});
+
+test('native dome readouts accept only matching, bounded fresh telemetry and never start a simulated wallpaper', () => {
+  const source = createRuntime();
+  const panel = createRuntime({ settingsWindow: true, webView2: true });
+  for (const runtime of [source, panel]) runtime.api.update({ autoSize: true }, false);
+  source.paint();
+  const frame = plain(source.api.getDomeState());
+  const config = plain(panel.api.getConfig());
+  assert.equal(panel.api.getDomeState(), null);
+  assert.equal(panel.api.setDomeState(frame), true);
+  assert.deepEqual(plain(panel.api.getDomeState()), frame);
+  assert.equal(panel.api.setDomeState(frame), false, 'Duplicate sequences cannot replay an old size');
+  for (const changes of [
+    { sizes: [99, ...frame.sizes.slice(1)] }, { bases: [0, ...frame.bases.slice(1)] },
+    { sizes: [null, ...frame.sizes.slice(1)] }, { autoSize: false }, { paused: 'false' },
+    { screen: { ...frame.screen, scale: Infinity } }, { screen: { ...frame.screen, width: -1 } },
+    { sequence: Number.MAX_SAFE_INTEGER + 1 }
+  ]) assert.equal(panel.api.setDomeState({ ...frame, sequence: frame.sequence + 1, ...changes }), false);
+  assert.equal(source.api.setDomeState(frame), false, 'Telemetry cannot alter an actual renderer');
+  panel.paint();
+  assert.equal(panel.paints, 0);
+  assert.equal(panel.queued, 0);
+  assert.equal(panel.writes.length, 0);
+  assert.deepEqual(plain(panel.api.getConfig()), config);
+  panel.api.update({ domeSizes: [1.4, ...config.domeSizes.slice(1)] }, false);
+  assert.equal(panel.api.getDomeState(), null);
+  assert.equal(panel.api.setDomeState({ ...frame, sequence: frame.sequence + 2 }), false);
+  panel.api.update(config, false);
+  assert.equal(panel.api.setDomeState(null), true);
+  assert.equal(panel.api.getDomeState(), null);
+  assert.equal(panel.api.setDomeState({ ...frame, sequence: 0 }), true, 'A new connection starts a new sequence after explicit loss');
+});
+
+function connectPublisher(runtime, token = 'a'.repeat(43)) {
+  const script = runtime.scripts.at(-1);
+  assert.ok(script && !script.removed);
+  assert.equal(runtime.window.GridLiveTelemetry.connect({ url: 'ws://127.0.0.1:54321/grid-wallpaper/', token }), true);
+  script.onload();
+  const socket = runtime.sockets.at(-1);
+  socket.open();
+  return socket;
+}
+
+test('desktop publisher waits for a native host and confines authenticated connections to the local bridge', () => {
+  for (const options of [{}, { settingsWindow: true, webView2: true }]) {
+    const runtime = createRuntime(options);
+    runtime.loadTelemetry();
+    runtime.window.livelyPropertyListener('autoSize', true);
+    assert.equal(runtime.scripts.length, 0);
+    assert.equal(runtime.sockets.length, 0);
+  }
+  const runtime = createRuntime({ webView2: true });
+  runtime.loadTelemetry();
+  assert.equal(runtime.scripts.length, 0);
+  runtime.window.livelyPropertyListener('autoSize', true);
+  assert.equal(runtime.scripts.length, 1);
+  const bootstrapUrl = new URL(runtime.scripts[0].src);
+  assert.equal(bootstrapUrl.pathname, '/wallpapers/grid%20wallpaper/windows-telemetry.js');
+  assert.ok(bootstrapUrl.searchParams.has('v'));
+  for (const url of ['ws://evil.example:54321/grid-wallpaper/', 'ws://127.0.0.1:65536/grid-wallpaper/',
+    'ws://127.0.0.1:54321/other/', 'ws://127.0.0.1:54321/grid-wallpaper/?token=bad',
+    'wss://127.0.0.1:54321/grid-wallpaper/']) {
+    assert.equal(runtime.window.GridLiveTelemetry.connect({ url, token: 'a'.repeat(43) }), false);
+  }
+  assert.equal(runtime.window.GridLiveTelemetry.connect({ url: 'ws://127.0.0.1:54321/grid-wallpaper/', token: 'short' }), false);
+  const socket = connectPublisher(runtime);
+  assert.deepEqual(plain(socket.protocols), ['grid-wallpaper-v1', 'grid-wallpaper-token.' + 'a'.repeat(43)]);
+  assert.equal(socket.sent[0].kind, 'hello');
+  assert.deepEqual(socket.sent[0].screen, { left: 0, top: 0, width: 1920, height: 1040, scale: 1 });
+  assert.equal(runtime.scripts[0].removed, true);
+  assert.equal(runtime.pendingTimers, 0);
+  runtime.paint();
+  assert.equal(socket.sent.length, 1, 'A closed settings panel does not subscribe to renderer frames');
+});
+
+test('desktop publisher sends bounded fresh frames only on demand and cancels pending work on disconnect', () => {
+  const runtime = createRuntime({ webView2: true });
+  runtime.loadTelemetry();
+  runtime.window.livelyPropertyListener('autoSize', true);
+  const socket = connectPublisher(runtime);
+  runtime.paint();
+  const config = plain(runtime.api.getConfig());
+  socket.message({ kind: 'update', autoSize: false });
+  socket.message({ kind: 'stream', active: true, command: 'extra' });
+  assert.equal(socket.sent.length, 1);
+  assert.deepEqual(plain(runtime.api.getConfig()), config);
+  socket.message({ kind: 'stream', active: true });
+  assert.equal(socket.sent.length, 2);
+  for (let i = 0; i < 30; i++) runtime.step(1000 / 60);
+  const frames = socket.sent.filter(message => message.kind === 'domes');
+  assert.ok(frames.length <= 9, 'The bridge caps continuous telemetry near 15 FPS');
+  assert.ok(frames.length >= 5);
+  assert.ok(frames.every((state, index) => !index || state.sequence > frames[index - 1].sequence));
+  runtime.api.update({ snapshot: true }, false);
+  runtime.paint();
+  runtime.runTimers(100);
+  assert.equal(socket.sent.at(-1).paused, true, 'The final frozen frame cannot be lost to throttling');
+  assert.deepEqual(socket.sent.at(-1).sizes, plain(runtime.api.getDomeState().sizes));
+  assert.equal(runtime.queued, 0);
+  const sent = socket.sent.length;
+  socket.message({ kind: 'stream', active: false });
+  runtime.api.update({ snapshot: false }, false);
+  runtime.paint();
+  runtime.runTimers(100);
+  assert.equal(socket.sent.length, sent);
+  assert.equal(runtime.pendingTimers, 0);
+  socket.message({ kind: 'stream', active: true });
+  socket.bufferedAmount = 1000;
+  const backpressured = socket.sent.length;
+  runtime.paint();
+  runtime.runTimers(100);
+  assert.equal(socket.sent.length, backpressured, 'A slow receiver never queues obsolete size frames');
+  runtime.api.update({ snapshot: true }, false);
+  runtime.paint();
+  assert.equal(runtime.pendingTimers, 1, 'Backpressure keeps only one latest-state retry');
+  socket.bufferedAmount = 0;
+  runtime.runTimers(100);
+  assert.equal(socket.sent.at(-1).paused, true, 'The last frozen state is delivered after backpressure drains');
+  assert.deepEqual(socket.sent.at(-1).sizes, plain(runtime.api.getDomeState().sizes));
+  socket.disconnect();
+  assert.equal(runtime.pendingTimers, 1);
+  runtime.window.livelyPropertyListener('lineOpacity', 0.1);
+  assert.equal(runtime.scripts.length, 1, 'Property updates do not bypass the reconnect delay');
+  runtime.runTimers(3000);
+  assert.equal(runtime.scripts.length, 2, 'Reconnect refreshes the installed-only bootstrap');
+  const next = connectPublisher(runtime, 'b'.repeat(43));
+  next.message({ kind: 'stream', active: true });
+  runtime.visibility(true);
+  assert.equal(next.closed, true);
+  assert.equal(runtime.pendingTimers, 0);
+  runtime.visibility(false);
+  assert.equal(runtime.scripts.length, 3);
+  runtime.window.dispatch('pagehide');
+  runtime.runTimers(10_000);
+  assert.equal(runtime.pendingTimers, 0);
+  assert.equal(runtime.scripts.length, 3);
+  runtime.window.dispatch('pageshow');
+  assert.equal(runtime.scripts.length, 4);
 });

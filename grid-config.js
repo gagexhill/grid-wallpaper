@@ -14,7 +14,7 @@
   const defaults = {
     count: 5, sizeScale: 1, speedScale: 1, forceScale: 1, lerpSpeed: 0.06,
     cellSize: 14, bgColor: '#1b1b17', lineColor: '#fffff2', lineOpacity: 0.05,
-    autoColor: false, mouseMode: 'repel', autoSize: false, vignette: false,
+    autoColor: false, mouseMode: 'repel', autoSize: false, vignette: true,
     snapshot: false, fpsLimit: 30, gradientLines: false,
     domeSizes: [1, 0.42, 1.7, 0.28, 0.9, 1.3, 0.38, 0.65, 2.1, 0.22]
   };
@@ -33,7 +33,8 @@
     return Object.freeze(value);
   }
   const hostSettings = { settingsUri: 'grid-wallpaper-settings:' };
-  const config = freeze({ schema, defaults, presets, hostSettings, fpsOptions: [15, 24, 30, 60], mouseModes: ['repel', 'attract', 'off'] });
+  const domePulse = { min: 0.55, max: 1 };
+  const config = freeze({ schema, defaults, presets, hostSettings, domePulse, fpsOptions: [15, 24, 30, 60], mouseModes: ['repel', 'attract', 'off'] });
   if (typeof module !== 'undefined' && module.exports) module.exports = config;
   else root.GridConfig = config;
 })(typeof window === 'undefined' ? globalThis : window);
