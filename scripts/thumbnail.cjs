@@ -13,7 +13,7 @@ const { GIFEncoder, quantize, applyPalette } = require('gifenc');
       Math.random = () => ((seed = Math.imul(1664525, seed) + 1013904223 >>> 0) / 4294967296);
     });
     await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
-    await page.goto(pathToFileURL(path.resolve(__dirname, '../grid-wallpaper.html')).href);
+    await page.goto(pathToFileURL(path.resolve(__dirname, '../wallpaper/grid-wallpaper.html')).href);
     await page.evaluate(() => {
       GridWallpaper.update({ ...GridConfig.presets.find(preset => preset.name === 'Sage'), lineOpacity: 0.24, cellSize: 18 });
       document.querySelector('#hamburger').hidden = true;
@@ -44,10 +44,10 @@ const { GIFEncoder, quantize, applyPalette } = require('gifenc');
       gif.writeFrame(frame.index, 320, 180, { palette: frame.palette, delay: 200, repeat: 0 });
     }
     gif.finish();
-    fs.writeFileSync(path.resolve(__dirname, '../preview.gif'), gif.bytes());
+    fs.writeFileSync(path.resolve(__dirname, '../wallpaper/preview.gif'), gif.bytes());
     await page.evaluate(() => GridWallpaper.update({ snapshot: true }));
     await page.clock.runFor(50);
-    await page.locator('#c').screenshot({ path: path.resolve(__dirname, '../thumbnail.jpg'), type: 'jpeg', quality: 90 });
+    await page.locator('#c').screenshot({ path: path.resolve(__dirname, '../wallpaper/thumbnail.jpg'), type: 'jpeg', quality: 90 });
     console.log('Rendered thumbnail.jpg and animated preview.gif from the wallpaper runtime.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

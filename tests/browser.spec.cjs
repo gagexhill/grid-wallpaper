@@ -1,8 +1,8 @@
 const { test, expect } = require('@playwright/test');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
-const nativeProperties = require('../LivelyProperties.json');
-const url = pathToFileURL(path.resolve(__dirname, '../grid-wallpaper.html')).href;
+const nativeProperties = require('../wallpaper/LivelyProperties.json');
+const url = pathToFileURL(path.resolve(__dirname, '../wallpaper/grid-wallpaper.html')).href;
 
 test.beforeEach(async ({ page }) => {
   const errors = [];
@@ -80,8 +80,8 @@ test('320px layout, practical targets, drag-to-bottom and color validation', asy
   const panel = await page.locator('#panel').boundingBox();
   expect(panel.x).toBeGreaterThanOrEqual(0); expect(panel.x + panel.width).toBeLessThanOrEqual(320);
   expect(panel.height).toBeGreaterThan(300);
-  const short = await page.locator('#panel button, #panel summary, #panel select, #panel input[type=range], #panel input[type=color], #panel input[type=text], .check-control, #hamburger').evaluateAll(nodes => nodes.filter(n => !n.closest('[hidden]') && n.getBoundingClientRect().height < 48).map(n => n.id || n.tagName));
-  expect(short).toEqual([]);
+  const controls = page.locator('#panel button, #panel summary, #panel select, #panel input[type=range], #panel input[type=color], #panel input[type=text], .check-control, #hamburger');
+  await expect.poll(() => controls.evaluateAll(nodes => nodes.filter(n => !n.closest('[hidden]') && n.getBoundingClientRect().height < 48).map(n => ({ control: n.id || n.textContent.trim(), height: n.getBoundingClientRect().height })))).toEqual([]);
   await page.locator('#hex-bgColor').fill('#zzzzzz');
   await expect(page.locator('#hex-bgColor')).toHaveAttribute('aria-invalid', 'true');
   await page.locator('#hex-bgColor').fill('#abcdef');
