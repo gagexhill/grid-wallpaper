@@ -9,6 +9,7 @@
   let revision = 0;
   let shownSequence = 0;
   let interactiveFrame = 0;
+  let telemetryAvailable = null;
   const setControlsEnabled = enabled => {
     document.querySelectorAll('#panel input, #panel select, #panel button:not(#close-settings)').forEach(control => { control.disabled = !enabled; });
   };
@@ -101,7 +102,9 @@
     return { width, height, gap, radius, frames };
   }
   window.GridSettingsHost = Object.freeze({
-    close() { host.postMessage({ kind: 'close' }); }
+    get telemetryAvailable() { return telemetryAvailable; },
+    close() { host.postMessage({ kind: 'close' }); },
+    observeDomes(active) { host.postMessage({ kind: 'observe-domes', active: active === true }); }
   });
   api.subscribe(config => {
     if (!ready) return;
@@ -115,6 +118,7 @@
   host.addEventListener('message', event => {
     const message = event.data;
     if (message?.kind === 'init' && message.properties && typeof message.properties === 'object') {
+      if (typeof message.telemetryAvailable === 'boolean') telemetryAvailable = message.telemetryAvailable;
       ready = false;
       for (const [name, property] of Object.entries(message.properties)) {
         if (property && Object.hasOwn(property, 'value')) window.livelyPropertyListener(name, property.value);
@@ -127,15 +131,22 @@
     } else if (message?.kind === 'shown' && Number.isSafeInteger(message.sequence) && message.sequence > 0) {
       clearShown();
       shownSequence = message.sequence;
+      window.dispatchEvent(new Event('grid-settings-shown'));
       reportInteractive();
     } else if (message?.kind === 'hidden') {
       clearShown();
+      api.setDomeState(null);
+      window.dispatchEvent(new Event('grid-settings-hidden'));
+    } else if (message?.kind === 'dome-state') {
+      api.setDomeState(message.state);
     } else if (message?.kind === 'loading') {
       ready = false;
       setControlsEnabled(false);
       showStatus('Loading your settings…');
     } else if (message?.kind === 'closing') {
       clearShown();
+      api.setDomeState(null);
+      window.dispatchEvent(new Event('grid-settings-hidden'));
       ready = false;
       setControlsEnabled(false);
       showStatus('Saving before closing…');

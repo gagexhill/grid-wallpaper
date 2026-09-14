@@ -3,6 +3,7 @@
   "grid-wallpaper.css",
   "grid-config.js",
   "grid-wallpaper.js",
+  "grid-live-telemetry.js",
   "grid-native-settings.js",
   "grid-settings.js",
   "LivelyProperties.json",

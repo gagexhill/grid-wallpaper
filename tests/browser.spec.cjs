@@ -133,6 +133,135 @@ test('inline drag cancellation and lost mouse release never resume on hover', as
   expect(results.every(result => result.stopped && !result.dragging)).toBe(true);
 });
 
+test('open panel follows its button during drag and snapping, then dismisses outside', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 1200 });
+  const menu = page.locator('#hamburger');
+  const panel = page.locator('#panel');
+  await menu.click();
+  await page.locator('details').evaluateAll(sections => sections.forEach(section => { section.open = false; }));
+  const start = await menu.boundingBox();
+  await page.mouse.move(start.x + 24, start.y + 24);
+  await page.mouse.down();
+  await page.mouse.move(900, 200);
+  const moving = await panel.boundingBox();
+  expect(moving.x + moving.width).toBeCloseTo(900, 0);
+  expect(moving.y).toBeCloseTo(200, 0);
+  await page.mouse.up();
+  await expect(panel).toBeVisible();
+  const snappedButton = await menu.boundingBox();
+  const snappedPanel = await panel.boundingBox();
+  expect(snappedPanel.x + snappedPanel.width).toBeCloseTo(snappedButton.x + 24, 0);
+  await page.mouse.click(600, 10);
+  await expect(panel).toBeHidden();
+});
+
+test('settings motion preserves immediate values and respects reduced motion', async ({ page }, info) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.locator('#hamburger').click();
+  await page.getByRole('button', { name: 'Expand all sections' }).click();
+  await expect(page.locator('#setting-vignette')).toBeChecked();
+  await page.locator('#setting-vignette').uncheck();
+  expect(await page.evaluate(() => GridWallpaper.getConfig().vignette)).toBe(false);
+  expect(await page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0.14s, 0.14s');
+  await page.locator('#setting-sizeScale').focus();
+  await page.keyboard.press('ArrowRight');
+  expect(await page.locator('#setting-sizeScale').inputValue()).toBe('1.05');
+  expect(await page.evaluate(() => GridWallpaper.getConfig().sizeScale)).toBe(1.05);
+  await page.getByRole('button', { name: 'Reset all', exact: true }).click();
+  await expect(page.locator('#setting-vignette')).toBeChecked();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0s');
+  expect(await page.locator('#dome-controls').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+  await page.locator('#panel').evaluate(node => { node.scrollTop = 0; });
+  await page.screenshot({ path: info.outputPath('restored-settings-motion.png') });
+});
+
+test('live dome rails show actual rendered sizes while focus edits only the saved base', async ({ page }) => {
+  await page.locator('#hamburger').click();
+  await page.getByText('Individual dome sizes', { exact: true }).click();
+  await page.evaluate(() => GridWallpaper.update({ autoSize: true, snapshot: false }));
+  await expect(page.locator('#dome-size-status')).toContainText('Sliders show live sizes.');
+  const before = await page.evaluate(() => {
+    window.domeUiSamples = [];
+    window.stopDomeUiSamples = GridWallpaper.subscribeDomeState(state => {
+      if (!state) return;
+      const input = document.getElementById('dome-size-0');
+      window.domeUiSamples.push({ sequence: state.sequence, size: state.sizes[0], base: state.bases[0],
+        rail: Number(input.value), minimum: input.min, progress: input.style.getPropertyValue('--range-progress'),
+        output: input.closest('.control').querySelector('output').textContent });
+    });
+    return { config: GridWallpaper.getConfig(), storage: localStorage.getItem('grid-wallpaper.settings.v1') };
+  });
+  await expect.poll(() => page.evaluate(() => window.domeUiSamples.length)).toBeGreaterThanOrEqual(8);
+  const sampled = await page.evaluate(() => {
+    window.stopDomeUiSamples();
+    return { samples: window.domeUiSamples, config: GridWallpaper.getConfig(), storage: localStorage.getItem('grid-wallpaper.settings.v1') };
+  });
+  expect(sampled.config).toEqual(before.config);
+  expect(sampled.storage).toBe(before.storage);
+  expect(new Set(sampled.samples.map(sample => sample.size)).size).toBeGreaterThan(1);
+  for (const sample of sampled.samples) {
+    expect(sample.base).toBe(before.config.domeSizes[0]);
+    expect(sample.minimum).toBe('0');
+    expect(Math.abs(sample.rail - sample.size)).toBeLessThanOrEqual(0.005001);
+    expect(sample.output).toBe(`${sample.size.toFixed(2)}×`);
+    expect(Number.parseFloat(sample.progress)).toBeCloseTo(sample.size / 3 * 100, 5);
+  }
+  const rail = page.locator('#dome-size-0');
+  await rail.focus();
+  await expect(rail).toHaveValue(String(before.config.domeSizes[0]));
+  await expect(rail).toHaveAttribute('min', '0.1');
+  await expect(rail).not.toHaveAttribute('aria-valuetext', /Live size/);
+  await page.keyboard.press('ArrowRight');
+  const edited = Number((before.config.domeSizes[0] + 0.01).toFixed(2));
+  expect(await page.evaluate(() => GridWallpaper.getConfig().domeSizes[0])).toBe(edited);
+  await page.locator('#close-settings').focus();
+  await expect(rail).toHaveAttribute('aria-valuetext', /Live size/);
+  await expect.poll(() => page.evaluate(() => GridWallpaper.getDomeState()?.bases[0])).toBe(edited);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('grid-wallpaper.settings.v1')).domeSizes[0])).toBe(edited);
+});
+
+test('panel content motion never delays input and cancels on closing or reduced motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const opened = await page.evaluate(() => {
+    document.getElementById('hamburger').click();
+    const panel = document.getElementById('panel');
+    const animations = Array.from(panel.children).flatMap(node => node.getAnimations());
+    animations.forEach(animation => { animation.pause(); });
+    window.contentMotion = animations;
+    const input = document.getElementById('setting-speedScale');
+    input.value = '1.5';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return { visible: !panel.hidden, inert: panel.inert, disabled: input.disabled,
+      value: GridWallpaper.getConfig().speedScale, animations: animations.length,
+      duration: Math.max(...animations.map(animation => animation.effect.getTiming().duration)) };
+  });
+  expect(opened).toMatchObject({ visible: true, inert: false, disabled: false, value: 1.5 });
+  expect(opened.animations).toBeGreaterThan(0);
+  expect(opened.duration).toBeLessThanOrEqual(180);
+  const closed = await page.evaluate(() => {
+    document.getElementById('close-settings').click();
+    return { hidden: document.getElementById('panel').hidden,
+      canceled: window.contentMotion.every(animation => animation.playState === 'idle') };
+  });
+  expect(closed).toEqual({ hidden: true, canceled: true });
+  await page.evaluate(() => {
+    document.getElementById('hamburger').click();
+    window.contentMotion = Array.from(document.getElementById('panel').children).flatMap(node => node.getAnimations());
+    window.contentMotion.forEach(animation => animation.pause());
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect.poll(() => page.evaluate(() => window.contentMotion.every(animation => animation.playState === 'idle'))).toBe(true);
+  const reduced = await page.evaluate(() => {
+    document.getElementById('close-settings').click();
+    document.getElementById('hamburger').click();
+    const panel = document.getElementById('panel');
+    return { visible: !panel.hidden, inert: panel.inert,
+      animations: Array.from(panel.children).flatMap(node => node.getAnimations()).length };
+  });
+  expect(reduced).toEqual({ visible: true, inert: false, animations: 0 });
+});
+
 test('reduced-motion first run freezes and blocked storage remains usable', async ({ page, context }) => {
   await context.clearCookies();
   await page.evaluate(() => localStorage.clear());
@@ -178,7 +307,8 @@ for (const display of [
     expect(moved.y + moved.height).toBeLessThanOrEqual(bottom - 16 + 0.1);
     await menu.click();
     const above = await page.locator('#panel').boundingBox();
-    expect(above.y + above.height).toBeLessThanOrEqual(moved.y - 12 + 0.1);
+    expect(above.y + above.height).toBeLessThanOrEqual(bottom - 16 + 0.1);
+    expect(above.y).toBeGreaterThanOrEqual(16);
     await page.screenshot({ path: info.outputPath('taskbar-clearance.png') });
   });
 }
@@ -303,4 +433,111 @@ test('custom host preserves the panel and confirms only saved revisions', async 
   await expect(page.locator('#save-status')).toHaveText('Saving before closing…');
   await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'error', message: 'Could not save before closing.' } }));
   await expect(page.locator('#setting-count')).toBeEnabled();
+});
+
+async function loadTelemetryPanel(page, telemetryAvailable = true) {
+  await page.addInitScript(() => {
+    window.GridSettingsWindow = true;
+    window.hostMessages = [];
+    window.chrome.webview = {
+      postMessage: message => window.hostMessages.push(message),
+      addEventListener: (kind, listener) => { if (kind === 'message') window.receiveHostMessage = listener; }
+    };
+  });
+  await page.reload();
+  const properties = structuredClone(nativeProperties);
+  properties.autoSize.value = true;
+  await page.evaluate(({ properties, telemetryAvailable }) => {
+    window.receiveHostMessage({ data: { kind: 'init', properties, telemetryAvailable } });
+  }, { properties, telemetryAvailable });
+  await expect(page.locator('#setting-autoSize')).toBeEnabled();
+}
+
+const observationMessages = page => page.evaluate(() => window.hostMessages.filter(message => message.kind === 'observe-domes'));
+
+test('native telemetry observes only a shown panel with its dome section open and automatic sizing enabled', async ({ page }) => {
+  await loadTelemetryPanel(page);
+  const summary = page.getByText('Individual dome sizes', { exact: true });
+  await summary.click();
+  expect(await observationMessages(page)).toEqual([]);
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'shown', sequence: 1 } }));
+  await expect.poll(() => observationMessages(page)).toEqual([{ kind: 'observe-domes', active: true }]);
+  await summary.click();
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: false });
+  await summary.click();
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: true });
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'hidden' } }));
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: false });
+  const hiddenCount = (await observationMessages(page)).length;
+  await summary.click();
+  await summary.click();
+  expect((await observationMessages(page)).length).toBe(hiddenCount);
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'shown', sequence: 2 } }));
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: true });
+  await page.locator('#setting-autoSize').uncheck();
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: false });
+  await page.locator('#setting-autoSize').check();
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: true });
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'closing' } }));
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: false });
+  expect(await page.evaluate(() => GridWallpaper.getDomeState())).toBeNull();
+});
+
+test('native live rails reject stale data, preserve base editing and never turn telemetry into saved changes', async ({ page }) => {
+  await loadTelemetryPanel(page);
+  await page.getByText('Individual dome sizes', { exact: true }).click();
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'shown', sequence: 1 } }));
+  await expect.poll(async () => (await observationMessages(page)).at(-1)).toEqual({ kind: 'observe-domes', active: true });
+  const before = await page.evaluate(() => ({ config: GridWallpaper.getConfig(),
+    storage: localStorage.getItem('grid-wallpaper.settings.v1'),
+    changes: window.hostMessages.filter(message => message.kind === 'change').length }));
+  const bases = before.config.domeSizes.slice(0, before.config.count);
+  const frame = { kind: 'domes', sequence: 1, autoSize: true, paused: false, bases,
+    sizes: bases.map(base => base * 0.7), screen: { left: 0, top: 0, width: 1920, height: 1040, scale: 1 } };
+  const send = state => page.evaluate(state => window.receiveHostMessage({ data: { kind: 'dome-state', state } }), state);
+  await send(frame);
+  const rail = page.locator('#dome-size-0');
+  await expect(rail).toHaveValue('0.7');
+  await expect(rail).toHaveAttribute('aria-valuetext', 'Live size 0.70×; base 1.00×');
+  const rejected = [
+    { ...frame, sizes: bases.map(base => base * 0.9) },
+    { ...frame, sequence: 2, bases: [2, ...bases.slice(1)] },
+    { ...frame, sequence: 2, sizes: [99, ...frame.sizes.slice(1)] },
+    { ...frame, sequence: 2, autoSize: false }
+  ];
+  for (const invalid of rejected) {
+    await send(invalid);
+    await expect(rail).toHaveValue('0.7');
+  }
+  await send({ ...frame, sequence: 2, paused: true, sizes: bases.map(base => base * 0.8) });
+  await expect(rail).toHaveValue('0.8');
+  await expect(page.locator('#dome-size-status')).toContainText('Live sizes are paused.');
+  expect(await page.evaluate(() => GridWallpaper.getConfig())).toEqual(before.config);
+  expect(await page.evaluate(() => localStorage.getItem('grid-wallpaper.settings.v1'))).toBe(before.storage);
+  expect(await page.evaluate(() => window.hostMessages.filter(message => message.kind === 'change').length)).toBe(before.changes);
+  await rail.focus();
+  await expect(rail).toHaveValue('1');
+  await send({ ...frame, sequence: 3, sizes: bases.map(base => base * 0.6) });
+  await expect(rail).toHaveValue('1');
+  await page.keyboard.press('ArrowRight');
+  expect(await page.evaluate(() => GridWallpaper.getConfig().domeSizes[0])).toBe(1.01);
+  const changes = await page.evaluate(() => window.hostMessages.filter(message => message.kind === 'change'));
+  expect(changes).toHaveLength(before.changes + 1);
+  expect(changes.at(-1).properties).toEqual({ domeSize0: 1.01 });
+  await page.locator('#close-settings').focus();
+  await expect(rail).toHaveValue('1.01');
+  await send({ ...frame, sequence: 4 });
+  await expect(rail).toHaveValue('1.01');
+  await expect(rail).not.toHaveAttribute('aria-valuetext', /Live size/);
+  const updatedBases = [1.01, ...bases.slice(1)];
+  await send({ ...frame, sequence: 5, bases: updatedBases, sizes: updatedBases.map(base => base * 0.7) });
+  await expect(rail).toHaveAttribute('aria-valuetext', 'Live size 0.71×; base 1.01×');
+  await send(null);
+  await expect(rail).toHaveValue('1.01');
+  await expect(page.locator('#dome-size-status')).toContainText('Waiting for live sizes.');
+  expect(await page.evaluate(() => window.hostMessages.filter(message => message.kind === 'change').length)).toBe(changes.length);
+  await page.evaluate(() => window.receiveHostMessage({ data: { kind: 'hidden' } }));
+  await send({ ...frame, sequence: 6, bases: updatedBases, sizes: updatedBases.map(base => base * 0.9) });
+  await expect(rail).toHaveValue('1.01');
+  expect(await page.evaluate(() => window.hostMessages.filter(message => message.kind === 'change').length)).toBe(changes.length);
 });

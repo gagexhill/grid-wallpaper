@@ -10,7 +10,7 @@ Download and extract the Grid Wallpaper package, open PowerShell in that folder,
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-This uses Windows Package Manager to install Lively if needed, copies the wallpaper into its native library, and requests activation. Complete Lively's first-run setup if prompted, then rerun the same command. No Git, Node.js, developer setup, account for the wallpaper, or web server is required. Internet is needed only to obtain the package and any missing Lively prerequisites.
+This uses Windows Package Manager to install Lively if needed, copies the wallpaper into its native library, and requests activation. Complete Lively's first-run setup if prompted, then rerun the same command. No Git, Node.js, developer setup, account for the wallpaper, or server configuration is required. Internet is needed only to obtain the package and any missing Lively prerequisites.
 
 For a read-only plan, add `-Preview`. Existing Lively installations and custom library locations are supported. See [operations](OPERATIONS.md) for troubleshooting, updates and removal.
 
@@ -21,6 +21,8 @@ Setup warms the settings panel so the button opens it directly. While hidden, it
 The desktop panel supports the primary display with Lively's default WebView2 player and per-screen layout. For other display arrangements or the optional Chromium player, use Lively's **Customize wallpaper** command. The Windows package targets x64 Windows 10/11.
 
 The default frame limit is 30 fps. Animation speed stays the same when you lower the frame limit. Freeze Frame preserves the image and still redraws when settings or display dimensions change.
+
+With automatic dome sizing enabled, the dome sliders show current sizes. Focus a slider to edit its base size; move focus away to resume its live readout. The desktop readout uses a private connection within this computer and sends no data to the internet.
 
 ## Develop and validate
 
