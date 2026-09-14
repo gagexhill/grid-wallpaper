@@ -210,7 +210,7 @@ internal sealed class DomeTelemetry : IDisposable
                 }
                 if (used == 0) return;
                 Dictionary<string, object> frame = serializer.DeserializeObject(utf8.GetString(buffer, 0, used)) as Dictionary<string, object>;
-                Rectangle area = Screen.PrimaryScreen.WorkingArea;
+                Rectangle area = Screen.PrimaryScreen.Bounds;
                 double scale;
                 using (Graphics graphics = Graphics.FromHwnd(IntPtr.Zero)) scale = graphics.DpiX / 96.0;
                 if (!current.Ready)
@@ -348,8 +348,7 @@ internal sealed class DomeTelemetry : IDisposable
         sequence = (long)numericSequence;
         state = new Dictionary<string, object> { { "kind", "domes" }, { "sequence", sequence }, { "autoSize", autoSize },
             { "paused", (bool)frame["paused"] }, { "bases", normalizedBases }, { "sizes", normalizedSizes },
-            { "screen", new Dictionary<string, object> { { "left", area.Left / scale }, { "top", area.Top / scale },
-                { "width", area.Width / scale }, { "height", area.Height / scale }, { "scale", scale } } } };
+            { "screen", new Dictionary<string, object>((Dictionary<string, object>)frame["screen"]) } };
         return true;
     }
 
@@ -362,8 +361,11 @@ internal sealed class DomeTelemetry : IDisposable
             || !Number(screen["scale"], out scale) || scale < 0.5 || scale > 8 || width <= 0 || height <= 0
             || Double.IsNaN(expectedScale) || Double.IsInfinity(expectedScale) || Math.Abs(scale - expectedScale) > 0.01) return false;
         double tolerance = Math.Max(1, scale);
-        return Math.Abs(left * scale - area.Left) <= tolerance && Math.Abs(top * scale - area.Top) <= tolerance
-            && Math.Abs(width * scale - area.Width) <= tolerance && Math.Abs(height * scale - area.Height) <= tolerance;
+        // Taskbar visibility can change the available rectangle independently in each process.
+        // Identify the primary display by containment in its full bounds, not an exact work area.
+        return left * scale >= area.Left - tolerance && top * scale >= area.Top - tolerance
+            && (left + width) * scale <= area.Right + tolerance && (top + height) * scale <= area.Bottom + tolerance
+            && width * scale >= area.Width / 2d && height * scale >= area.Height / 2d;
     }
 
     private static bool ExactKeys(Dictionary<string, object> value, params string[] keys)
@@ -518,6 +520,8 @@ internal sealed class DomeTelemetry : IDisposable
             { "paused", false }, { "bases", new double[] { 0.1, 3 } }, { "sizes", new double[] { 0.055, 3 } }, { "screen", screen } };
         Dictionary<string, object> state;
         long sequence;
+        if (!ValidateState(frame, bounds, new Rectangle(0, 0, 1920, 1200), 1.25, -1, out state, out sequence)
+            || ValidateState(frame, bounds, new Rectangle(1920, 0, 1920, 1200), 1.25, -1, out state, out sequence)) return 72;
         if (!ValidateState(frame, bounds, area, 1.25, -1, out state, out sequence) || sequence != 1) return 62;
         if (ValidateState(frame, bounds, area, 1.25, 1, out state, out sequence)) return 63;
         frame["autoSize"] = false;
