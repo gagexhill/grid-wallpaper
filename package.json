@@ -1,6 +1,6 @@
 {
   "name": "grid-wallpaper",
-  "version": "1.0.0",
+  "version": "1.0.0-preview.6",
   "private": true,
   "license": "MIT",
   "description": "Offline interactive Canvas wallpaper for Windows and browsers",
