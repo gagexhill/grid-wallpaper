@@ -11,7 +11,6 @@ const sources = ['grid-config.js', 'grid-wallpaper.js'].map(name => ({
   name,
   source: fs.readFileSync(path.join(root, name), 'utf8')
 }));
-const telemetrySource = fs.readFileSync(path.join(root, 'grid-live-telemetry.js'), 'utf8');
 
 function eventTarget() {
   const listeners = new Map();
@@ -164,7 +163,6 @@ function createRuntime(options = {}) {
     writes,
     scripts,
     sockets,
-    loadTelemetry() { vm.runInContext(telemetrySource, environment, { filename: 'grid-live-telemetry.js' }); },
     runTimers(elapsed) {
       now += elapsed;
       for (let pass = 0; pass < 100; pass++) {
@@ -561,13 +559,11 @@ function connectPublisher(runtime, token = 'a'.repeat(43)) {
 test('desktop publisher waits for a native host and confines authenticated connections to the local bridge', () => {
   for (const options of [{}, { settingsWindow: true, webView2: true }]) {
     const runtime = createRuntime(options);
-    runtime.loadTelemetry();
     runtime.window.livelyPropertyListener('autoSize', true);
     assert.equal(runtime.scripts.length, 0);
     assert.equal(runtime.sockets.length, 0);
   }
   const runtime = createRuntime({ webView2: true });
-  runtime.loadTelemetry();
   assert.equal(runtime.scripts.length, 0);
   runtime.window.livelyPropertyListener('autoSize', true);
   assert.equal(runtime.scripts.length, 1);
@@ -592,7 +588,6 @@ test('desktop publisher waits for a native host and confines authenticated conne
 
 test('desktop publisher sends bounded fresh frames only on demand and cancels pending work on disconnect', () => {
   const runtime = createRuntime({ webView2: true });
-  runtime.loadTelemetry();
   runtime.window.livelyPropertyListener('autoSize', true);
   const socket = connectPublisher(runtime);
   runtime.paint();

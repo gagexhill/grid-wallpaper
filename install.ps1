@@ -260,7 +260,8 @@ function Assert-Destination($Destination, $Metadata) {
 }
 
 function Copy-Runtime($Destination) {
-    foreach ($file in $runtimeFiles) {
+    $retiredFiles = @('grid-live-telemetry.js', 'grid-native-settings.js')
+    foreach ($file in ($runtimeFiles + $retiredFiles)) {
         $targetPath = Join-Path $Destination $file
         if (Test-Path -LiteralPath $targetPath) {
             $target = Get-Item -LiteralPath $targetPath
@@ -277,6 +278,17 @@ function Copy-Runtime($Destination) {
         Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
         if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash) {
             throw "Installed file verification failed: $file"
+        }
+    }
+    # Retire only the merged helpers, after every replacement has been verified.
+    foreach ($file in $retiredFiles) {
+        $targetPath = Join-Path $Destination $file
+        if (Test-Path -LiteralPath $targetPath) {
+            $target = Get-Item -LiteralPath $targetPath
+            if ($target.PSIsContainer -or ($target.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw "A retired runtime target is not a regular file: $targetPath"
+            }
+            Remove-Item -LiteralPath $targetPath -Force
         }
     }
 }

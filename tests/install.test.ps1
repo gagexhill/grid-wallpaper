@@ -24,6 +24,7 @@ $registryStartupSiblingName = 'UnrelatedFixtureStartup'
 $registryFixturesReserved = $false
 $configJunctionPath = Join-Path $fixtureDirectory 'linked-host-config\windows-host.json'
 $sourceJunctionPath = Join-Path $fixtureDirectory 'flat-release\wallpaper'
+$retiredJunctionPath = Join-Path $fixtureDirectory 'linked-retired-runtime\grid-native-settings.js'
 $module = $null
 $flatModule = $null
 $assertionCount = 0
@@ -252,6 +253,49 @@ try {
     Assert-Check ((Get-Content -LiteralPath $existingExtraPath -Raw) -ceq 'preserve existing unrelated data') 'Repeat installation must preserve unrelated existing files.'
     Write-Output 'PASS repeat installation preserves native settings'
 
+    $retiredNames = @('grid-live-telemetry.js', 'grid-native-settings.js')
+    foreach ($retiredName in $retiredNames) {
+        Write-Fixture (Join-Path $expectedCustomDestination $retiredName) 'retired helper fixture'
+        Write-Fixture (Join-Path $flatReleaseDirectory $retiredName) 'retired flat helper fixture'
+    }
+    Copy-Runtime $expectedCustomDestination
+    Copy-FlatFixtureRuntime $flatReleaseDirectory
+    foreach ($retiredName in $retiredNames) {
+        Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination $retiredName))) 'Upgrades must remove each merged helper.'
+        Assert-Check (-not (Test-Path -LiteralPath (Join-Path $flatReleaseDirectory $retiredName))) 'Same-folder upgrades must remove each merged helper.'
+    }
+    foreach ($runtimeName in $runtimeNames) {
+        Assert-Check ((Get-FileHash -LiteralPath (Join-Path $flatReleaseDirectory $runtimeName)).Hash -ceq
+            (Get-FileHash -LiteralPath (Join-Path $flatDestination $runtimeName)).Hash) ('Same-folder upgrades must preserve current runtime bytes: ' + $runtimeName)
+    }
+    Assert-Check ((Get-Content -LiteralPath (Join-Path $flatReleaseDirectory 'windows-host.json') -Raw) -ceq '{"localOnly":"must not be copied"}') 'Retirement must preserve local host configuration.'
+    Assert-Check ((Get-Content -LiteralPath (Join-Path $flatReleaseDirectory 'windows-telemetry.js') -Raw) -ceq 'installed-session fixture: must not be copied') 'Retirement must preserve the installed session bootstrap.'
+    Assert-Check ((Get-Content -LiteralPath (Join-Path $flatReleaseDirectory 'README.md') -Raw) -ceq 'package-only fixture: README.md') 'Same-folder retirement must preserve package documentation.'
+    Write-Fixture (Join-Path $expectedCustomDestination $retiredNames[0]) 'partial prior upgrade fixture'
+    Copy-Runtime $expectedCustomDestination
+    Copy-Runtime $expectedCustomDestination
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $expectedCustomDestination $retiredNames[0]))) 'Missing or partially retired helpers must allow repeat upgrades.'
+    Assert-Check ((Get-Content -LiteralPath $savedSettingsPath -Raw) -ceq '{"preserved":true}') 'Retirement must preserve native saved customization.'
+    Assert-Check ((Get-Content -LiteralPath $existingExtraPath -Raw) -ceq 'preserve existing unrelated data') 'Retirement must preserve unrelated existing files.'
+
+    $failedUpgrade = Join-Path $fixtureDirectory 'failed-upgrade'
+    Copy-Runtime $failedUpgrade
+    foreach ($retiredName in $retiredNames) { Write-Fixture (Join-Path $failedUpgrade $retiredName) 'retain until verified' }
+    Write-Fixture (Join-Path $failedUpgrade $runtimeNames[0]) 'outdated first file'
+    $lockedRuntime = [IO.File]::Open((Join-Path $failedUpgrade $runtimeNames[-1]), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        Assert-Fails { Copy-Runtime $failedUpgrade } 'A locked later runtime file must fail the upgrade.'
+        Assert-Check ((Get-Content -LiteralPath (Join-Path $failedUpgrade $runtimeNames[0]) -Raw) -ceq 'updated runtime fixture') 'The copy-failure fixture must reach copying before failing.'
+        foreach ($retiredName in $retiredNames) {
+            Assert-Check ((Get-Content -LiteralPath (Join-Path $failedUpgrade $retiredName) -Raw) -ceq 'retain until verified') 'Failed upgrades must retain the retired helpers.'
+        }
+    } finally { $lockedRuntime.Dispose() }
+    Copy-Runtime $failedUpgrade
+    foreach ($retiredName in $retiredNames) {
+        Assert-Check (-not (Test-Path -LiteralPath (Join-Path $failedUpgrade $retiredName))) 'Retry after releasing a copy failure must finish retirement.'
+    }
+    Write-Output 'PASS verified helper retirement, same-folder upgrades and failed-copy recovery'
+
     $legacyMetadata = $metadataText | ConvertFrom-Json
     $legacyMetadata.Author = 'Ventryn LLC'
     $legacyMetadata.License = $null
@@ -294,6 +338,24 @@ try {
     Assert-Fails { Copy-Runtime $blockedDestination } 'All runtime target types must be checked before copying.' 'not a regular file'
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $blockedDestination $runtimeNames[0]))) 'A target collision must fail before any runtime file is copied.'
     Write-Output 'PASS collisions fail before overwriting files'
+
+    foreach ($retiredName in $retiredNames) {
+        $retiredCollision = Join-Path $fixtureDirectory ('blocked-' + $retiredName)
+        $null = [IO.Directory]::CreateDirectory((Join-Path $retiredCollision $retiredName))
+        Assert-Fails { Copy-Runtime $retiredCollision } 'Retired helper directories must be rejected.' 'not a regular file'
+        Assert-Check (-not (Test-Path -LiteralPath (Join-Path $retiredCollision $runtimeNames[0]))) 'Retired helper collisions must fail before copying.'
+        Assert-Check (Test-Path -LiteralPath (Join-Path $retiredCollision $retiredName) -PathType Container) 'Retired helper directories must not be deleted.'
+    }
+    $linkedRetirement = Split-Path $retiredJunctionPath -Parent
+    Write-Fixture (Join-Path $linkedRetirement $retiredNames[0]) 'preserve prior helper on collision'
+    $retiredLinkTarget = Join-Path $fixtureDirectory 'retired-link-target'
+    Write-Fixture (Join-Path $retiredLinkTarget 'sentinel.txt') 'preserve linked content'
+    $null = New-Item -ItemType Junction -Path $retiredJunctionPath -Target $retiredLinkTarget
+    Assert-Fails { Copy-Runtime $linkedRetirement } 'Retired helper junctions must be rejected.' 'not a regular file'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $linkedRetirement $runtimeNames[0]))) 'Retired links must fail before copying.'
+    Assert-Check ((Get-Content -LiteralPath (Join-Path $linkedRetirement $retiredNames[0]) -Raw) -ceq 'preserve prior helper on collision') 'Retired link preflight must precede any retirement.'
+    Assert-Check ((Get-Content -LiteralPath (Join-Path $retiredLinkTarget 'sentinel.txt') -Raw) -ceq 'preserve linked content') 'Retirement must never follow directory links.'
+    Write-Output 'PASS retired helper directory and junction rejection'
 
     $hostConfigPath = Join-Path $expectedCustomDestination 'windows-host.json'
     Assert-HostConfig $expectedCustomDestination
@@ -431,7 +493,8 @@ try {
     }
     foreach ($junctionFixture in @(
         @{ Path = $configJunctionPath; Relative = 'linked-host-config\windows-host.json' },
-        @{ Path = $sourceJunctionPath; Relative = 'flat-release\wallpaper' }
+        @{ Path = $sourceJunctionPath; Relative = 'flat-release\wallpaper' },
+        @{ Path = $retiredJunctionPath; Relative = 'linked-retired-runtime\grid-native-settings.js' }
     )) {
         if (-not (Test-Path -LiteralPath $junctionFixture.Path)) { continue }
         $junctionItem = Get-Item -LiteralPath $junctionFixture.Path -Force
