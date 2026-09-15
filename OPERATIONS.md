@@ -92,6 +92,19 @@ Keep native secret scanning, **repository-level** push protection and private vu
 
 Public forks cannot be prohibited by a repository setting. Treat public issues and pull requests as untrusted input: inspect diffs without running contributed code, and do not expose local credentials or authorize workflows merely to validate a contribution. [SECURITY.md](https://github.com/gagexhill/grid-wallpaper/blob/main/.github/SECURITY.md) owns vulnerability-reporting instructions; public reports must never contain exploit secrets or personal information.
 
+## Discovery and feedback
+
+The Owner maintains the public download guide and triages Grid's issues. During early distribution, review feedback and GitHub's native metrics manually once a week:
+
+1. Open **Insights → Traffic** for views, unique visitors, full clones, referrers and popular paths. Record the collection time in UTC and the actual returned date range. [GitHub traffic](https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/viewing-traffic-to-a-repository) covers a rolling 14-day window; a missing recent bucket does not establish zero activity.
+2. Read release asset download counts through `gh api repos/gagexhill/grid-wallpaper/releases`. Compare ZIP counts by release, keeping checksums and other assets separate. Downloads do not establish installations or unique users; traffic and clones can include operator verification.
+3. Review repository stars, watchers and forks separately from account followers. For external issues, record time to the first substantive Owner response and whether the report provides actionable reproduction steps. Owner-authored work is a separate sample; no external reports means response time is unmeasured.
+4. Keep a dated private snapshot when comparison beyond the traffic window will help. Record the sample limits and one observed problem to improve: discovery, unclear value, download confusion, installation trouble or response delay. Small samples do not support conversion or adoption claims.
+
+Explain useful changes when a release ships, and write a focused technical note when an implementation lesson will help others. Respond to reproducible reports, link the owning fix and verify its outcome. Keep public bugs and suggestions in GitHub issues and vulnerabilities in private security reporting.
+
+Use the maintained [Releases entry](https://github.com/gagexhill/grid-wallpaper/releases) and README for every download/help path. The checked-in `wallpaper/preview.gif` is a half-speed animation loop from the renderer; it does not demonstrate desktop interaction or device acceptance. Match any showcase to the published artifact's supported configuration and open gates. Prepare community posts against the destination's current rules and obtain the Owner's authorization before posting.
+
 ## Host selection
 
 Windows' documented desktop-wallpaper API manages images/slideshows; it is not a Canvas host. Lively is the selected maintained host because it supports HTML, persistent native properties, pause events, WinGet installation and laptop policies without a paid dependency. Wallpaper Engine supports web wallpapers and similar pause policies but adds a purchase/distribution dependency and offers no demonstrated advantage for this renderer.

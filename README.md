@@ -60,7 +60,7 @@ Grid Wallpaper is [MIT licensed](LICENSE.txt), copyright 2026 gagexhill. You may
 
 ## Develop
 
-Use Node.js 22 or newer and Microsoft Edge on Windows. From a source checkout:
+Use the Node.js version in [.node-version](.node-version) and Microsoft Edge on Windows. With fnm configured, run `fnm use --install-if-missing` from the repository root to install or select it. From a source checkout:
 
 ```powershell
 npm ci
