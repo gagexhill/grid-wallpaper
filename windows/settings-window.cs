@@ -1536,7 +1536,7 @@ internal sealed class SettingsWindow : Form
             string file = Path.GetFileName(uri.LocalPath);
             allowed = SettingsData.SamePath(Path.GetDirectoryName(uri.LocalPath), installDirectory)
                 && (file == "grid-wallpaper.html" || file == "grid-wallpaper.css" || file == "grid-wallpaper.js"
-                    || file == "grid-config.js" || file == "grid-settings.js" || file == "grid-native-settings.js" || file == "grid-live-telemetry.js");
+                    || file == "grid-config.js" || file == "grid-settings.js");
         }
         if (!allowed) e.Response = browser.CoreWebView2.Environment.CreateWebResourceResponse(Stream.Null, 403, "Blocked", "Content-Type: text/plain");
     }

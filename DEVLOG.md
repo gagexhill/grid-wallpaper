@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-09-14 — Consolidate runtime ownership
+
+- Reduced the browser runtime from five JavaScript files to three: the renderer owns its telemetry publisher, and the settings module owns its Windows bridge. Kept the existing private scopes, execution order and host guards; no bundler, dependency or second animation scheduler was introduced.
+- Updated the HTML, native resource allowlist, package manifest and test entry points together. Configuration remains shared directly with the metadata generator, and HTML/CSS and native C# responsibilities remain separate.
+- Installer upgrades retire exactly the two merged helper files after all replacement copies verify. Collision preflight rejects directories and links, and failed copies retain the helpers for retry while preserving customization and unrelated local files.
+- This simplifies source and package organization without claiming reduced CPU or memory use. Current native acceptance and the deferred Windows restart/sign-in check remain in #1.
+
 ## 2026-09-14 — Restore Grid after primary-display identity changes
 
 - A confirmed Windows reboot exposed Lively's strict saved display-ID restoration: the core started while Grid remained queued for a disconnected identity. Manual re-selection added the current display alongside that old entry, which the helper incorrectly rejected as two primary displays.
