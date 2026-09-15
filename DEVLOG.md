@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-09-14 — Restore Grid after primary-display identity changes
+
+- A confirmed Windows reboot exposed Lively's strict saved display-ID restoration: the core started while Grid remained queued for a disconnected identity. Manual re-selection added the current display alongside that old entry, which the helper incorrectly rejected as two primary displays.
+- The helper now matches Windows' connected primary display and verifies its exact Lively-owned Grid player before creating controls. Disconnected saved primary entries remain native-owned and no longer hide the current settings button. Player exit retires the panel independently of core exit.
+- Added a bounded recovery opportunity in the existing supervisor using native `setwp`. It accepts only unchanged single-display Grid metadata for the same monitor model/connector, observes a stable native settings/layout snapshot, and suppresses recovery on user activity or ambiguity. A private local lifetime marker prevents helper restarts from retrying or reactivating an intentionally closed selection. The native alternatives and replacement condition are in OPERATIONS.md; no additional startup service or task is installed.
+- Self-tests cover connected/disconnected selection, URL-player isolation, identity mismatches, repeat attempts, changed snapshots and the persisted recovery claim. Controlled native reproduction and full Windows restart/sign-in acceptance remain distinct in #1.
+
 ## 2026-09-13 — Runtime and Windows installation foundation
 
 - Separated canonical configuration, Canvas rendering and native settings UI. Removed the unfinished duplicate page, remote font dependency and documentation of a nonexistent dent feature.

@@ -50,6 +50,7 @@ internal static class SettingsProgram
             if (result == 0) result = SettingsGeometry.SelfTest();
             if (result == 0) result = SettingsInteraction.SelfTest();
             if (result == 0) result = DomeTelemetry.SelfTest();
+            if (result == 0) result = WallpaperStartupRecovery.SelfTest();
             return result == 0 ? LauncherVisuals.SelfTest() : result;
         }
         string executable = Path.GetFullPath(Application.ExecutablePath);
@@ -105,7 +106,7 @@ internal static class SettingsProgram
     internal static void MarkWindow(IntPtr window) { SetProp(window, WindowMarker, new IntPtr(1)); }
     internal static void UnmarkWindow(IntPtr window)
     {
-        foreach (string suffix in new string[] { "", "Ready", "Suspended", "Radius", "Region", "Panel", "Launcher", "Dragging", "InteractiveMicros", "OpenSequence", "InteractiveSequence", "TelemetryAvailable", "TelemetryConnected", "TelemetryStreaming" }) RemoveProp(window, WindowMarker + suffix);
+        foreach (string suffix in new string[] { "", "Ready", "Suspended", "Radius", "Region", "Panel", "Launcher", "Dragging", "InteractiveMicros", "OpenSequence", "InteractiveSequence", "TelemetryAvailable", "TelemetryConnected", "TelemetryStreaming", "PlaybackDetected", "StartupRecovery" }) RemoveProp(window, WindowMarker + suffix);
     }
 
     internal static void SetWindowState(IntPtr window, bool ready, bool suspended, double radius, bool region)
@@ -150,6 +151,8 @@ internal static class SettingsProgram
             ready = window != IntPtr.Zero && GetProp(window, WindowMarker + "Ready") == new IntPtr(1),
             visible = panel != IntPtr.Zero && IsWindowVisible(panel),
             suspended = window != IntPtr.Zero && GetProp(window, WindowMarker + "Suspended") == new IntPtr(1),
+            playbackDetected = Metric(window, "PlaybackDetected") == new IntPtr(1),
+            startupRecovery = new string[] { "observing", "waiting", "skipped", "submitted", "failed" }[Math.Max(0, Math.Min(4, (int)Metric(window, "StartupRecovery").ToInt64()))],
             left = bounds.Left, top = bounds.Top, width = bounds.Right - bounds.Left, height = bounds.Bottom - bounds.Top,
             region = window != IntPtr.Zero && GetProp(window, WindowMarker + "Region") == new IntPtr(1),
             radius = window == IntPtr.Zero ? 0d : GetProp(window, WindowMarker + "Radius").ToInt64() / 1000d,
@@ -272,6 +275,8 @@ internal sealed class SettingsApplicationContext : ApplicationContext
     private SettingsWindow panel;
     private Point anchor;
     private bool checking, closing, openRequested;
+    private readonly WallpaperStartupRecovery recovery = new WallpaperStartupRecovery();
+    private CancellationTokenSource recoveryStop = new CancellationTokenSource();
 
     internal SettingsApplicationContext(string directory, bool warm, Point requestedAnchor, EventWaitHandle shutdownEvent)
     {
@@ -318,17 +323,21 @@ internal sealed class SettingsApplicationContext : ApplicationContext
         checking = true;
         try
         {
-            SettingsData loaded = await Task.Run(delegate { return SettingsData.Load(installDirectory); });
+            SettingsData loaded = await Task.Run(delegate { return SettingsData.Load(installDirectory, recovery, recoveryStop.Token); });
             if (closing) return;
             dormant.Stop();
             panel = new SettingsWindow(installDirectory, !openRequested, anchor, shutdown, supervisor.Handle, loaded);
             openRequested = false;
-            panel.ShutdownCancelled += delegate { closing = false; shutdown.Reset(); RegisterShutdown(); };
+            panel.ShutdownCancelled += delegate
+            {
+                closing = false; recoveryStop.Dispose(); recoveryStop = new CancellationTokenSource();
+                shutdown.Reset(); RegisterShutdown();
+            };
             panel.FormClosed += delegate
             {
                 panel = null;
                 SettingsProgram.SetWindowState(supervisor.Handle, false, false, 0, false);
-                foreach (string key in new string[] { "Panel", "Launcher", "Dragging", "InteractiveMicros", "OpenSequence", "InteractiveSequence" }) SettingsProgram.SetMetric(supervisor.Handle, key, 0);
+                foreach (string key in new string[] { "Panel", "Launcher", "Dragging", "InteractiveMicros", "OpenSequence", "InteractiveSequence", "PlaybackDetected", "TelemetryAvailable", "TelemetryConnected", "TelemetryStreaming" }) SettingsProgram.SetMetric(supervisor.Handle, key, 0);
                 if (closing) Finish(); else dormant.Start();
             };
         }
@@ -342,7 +351,11 @@ internal sealed class SettingsApplicationContext : ApplicationContext
             }
             if (!closing) dormant.Start();
         }
-        finally { checking = false; }
+        finally
+        {
+            checking = false;
+            if (!closing) SettingsProgram.SetMetric(supervisor.Handle, "StartupRecovery", recovery.State);
+        }
     }
 
     private void NativeChanged(object sender, FileSystemEventArgs e)
@@ -372,6 +385,7 @@ internal sealed class SettingsApplicationContext : ApplicationContext
     {
         if (closing) return;
         closing = true;
+        recoveryStop.Cancel();
         dormant.Stop();
         nativeChange.Stop();
         if (panel != null) panel.StopForInstaller(); else Finish();
@@ -382,6 +396,7 @@ internal sealed class SettingsApplicationContext : ApplicationContext
         dormant.Dispose();
         nativeChange.Dispose();
         nativeWatcher.Dispose();
+        recoveryStop.Dispose();
         if (shutdownWait != null) shutdownWait.Unregister(null);
         supervisor.PermitClose = true;
         supervisor.Close();
@@ -995,6 +1010,8 @@ internal sealed class SettingsData
     internal string PropertyPath;
     internal int DisplayIndex;
     internal int LivelyProcessId;
+    internal int PlaybackProcessId;
+    internal string DisplayId;
     internal Dictionary<string, object> Properties;
     private CultureInfo nativeCulture = CultureInfo.InvariantCulture;
 
@@ -1056,7 +1073,7 @@ internal sealed class SettingsData
         return String.Equals(Path.GetFullPath(first).TrimEnd('\\'), Path.GetFullPath(second).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static SettingsData Load(string installDirectory)
+    internal static SettingsData Load(string installDirectory, WallpaperStartupRecovery recovery = null, CancellationToken cancellation = default(CancellationToken))
     {
         Dictionary<string, object> host = ObjectValue(ReadJson(Path.Combine(installDirectory, "windows-host.json")));
         SettingsData data = new SettingsData();
@@ -1067,7 +1084,10 @@ internal sealed class SettingsData
             || !String.Equals(Path.GetFileName(data.LivelyExecutable), "Lively.exe", StringComparison.OrdinalIgnoreCase)
             || (new DirectoryInfo(installDirectory).Attributes & FileAttributes.ReparsePoint) != 0)
             throw new SettingsFailure("Run the installed Grid Wallpaper settings window. Rerun setup if it was moved.");
+        if (recovery != null) recovery.Prepare(data, cancellation);
         data.ReloadProperties();
+        data.PlaybackProcessId = WallpaperPlayback.Find(data, false);
+        if (data.PlaybackProcessId == 0) throw new SettingsFailure("Grid Wallpaper is not playing on the primary display. Apply it in Lively and reopen settings.");
         return data;
     }
 
@@ -1089,7 +1109,7 @@ internal sealed class SettingsData
     }
 
     // Store installations can expose logical AppData paths through native metadata.
-    private string NativePath(string path)
+    internal string NativePath(string path)
     {
         string full = Path.GetFullPath(path);
         string standard = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lively Wallpaper");
@@ -1101,42 +1121,24 @@ internal sealed class SettingsData
     internal void VerifyPrimary()
     {
         Dictionary<string, object> settings = ObjectValue(ReadJson(Path.Combine(LivelyDataDirectory, "Settings.json")));
-        nativeCulture = LivelyCulture(settings);
-        object arrangement;
-        double arrangementValue;
-        if (!settings.TryGetValue("WallpaperArrangement", out arrangement) || !NumberValue(arrangement, out arrangementValue) || arrangementValue != 0)
-            throw new SettingsFailure("This settings window supports Grid Wallpaper on the primary display in Lively's per-screen layout. Use that layout, or customize through Lively.");
-        object browser;
-        double browserValue;
-        if (!settings.TryGetValue("WebBrowser", out browser) || !NumberValue(browser, out browserValue) || browserValue != 1)
-            throw new SettingsFailure("Use Lively's WebView2 player for the desktop settings button, or customize the wallpaper through Lively.");
+        VerifyEnvironment(settings);
         IList layouts = ReadJson(Path.Combine(LivelyDataDirectory, "WallpaperLayout.json")) as IList;
         if (layouts == null) throw new SettingsFailure("Apply Grid Wallpaper on the primary display in Lively before opening settings.");
-        Dictionary<string, object> primary = null;
-        int index = 0;
-        foreach (object item in layouts)
-        {
-            Dictionary<string, object> layout = ObjectValue(item);
-            object screenValue, primaryValue, indexValue;
-            if (!layout.TryGetValue("LivelyScreen", out screenValue)) continue;
-            Dictionary<string, object> screen = ObjectValue(screenValue);
-            if (!screen.TryGetValue("IsPrimary", out primaryValue) || !(primaryValue is bool) || !(bool)primaryValue) continue;
-            double numericIndex;
-            if (primary != null || !screen.TryGetValue("Index", out indexValue) || !NumberValue(indexValue, out numericIndex)
-                || numericIndex < 1 || numericIndex > 64 || Math.Truncate(numericIndex) != numericIndex)
-                throw new SettingsFailure("Lively's primary display could not be identified. Reapply Grid Wallpaper and reopen settings.");
-            primary = layout;
-            index = (int)numericIndex;
-        }
-        object wallpaperPath;
+        WallpaperDisplay display = WallpaperDisplay.Current();
+        Dictionary<string, object> primary = display.Select(layouts);
+        object wallpaperPath, screenValue, indexValue;
+        double numericIndex;
         if (primary == null || !primary.TryGetValue("LivelyInfoPath", out wallpaperPath) || !(wallpaperPath is string)
             || !SamePath(NativePath((string)wallpaperPath), WallpaperDirectory))
-            throw new SettingsFailure("Grid Wallpaper must be active on the primary display. Apply it in Lively and reopen settings.");
+            throw new SettingsFailure("Grid Wallpaper must be active on the current primary display. Apply it in Lively and reopen settings.");
+        if (!primary.TryGetValue("LivelyScreen", out screenValue)
+            || !ObjectValue(screenValue).TryGetValue("Index", out indexValue) || !NumberValue(indexValue, out numericIndex)
+            || numericIndex < 1 || numericIndex > 64 || Math.Truncate(numericIndex) != numericIndex)
+            throw new SettingsFailure("Lively's primary display could not be identified. Reapply Grid Wallpaper and reopen settings.");
+        int index = (int)numericIndex;
         string library = NativePath(RequiredPath(settings, "WallpaperDir"));
-        if (!SamePath(Path.Combine(library, "wallpapers", "grid-wallpaper"), WallpaperDirectory))
-            throw new SettingsFailure("The wallpaper library changed. Rerun Grid Wallpaper setup to reconnect settings.");
         string propertyPath = Path.Combine(library, "SaveData", "wpdata", "grid-wallpaper", index.ToString(CultureInfo.InvariantCulture), "LivelyProperties.json");
-        if (PropertyPath != null && (!SamePath(propertyPath, PropertyPath) || index != DisplayIndex))
+        if (PropertyPath != null && (!SamePath(propertyPath, PropertyPath) || index != DisplayIndex || DisplayId != display.Id))
             throw new SettingsFailure("The active display changed. Close and reopen wallpaper settings.");
         // Match the exact v2.2.1 per-screen property factory path; never choose a directory arbitrarily.
         DirectoryInfo directory = new DirectoryInfo(Path.GetDirectoryName(propertyPath));
@@ -1148,6 +1150,28 @@ internal sealed class SettingsData
         }
         PropertyPath = propertyPath;
         DisplayIndex = index;
+        DisplayId = display.Id;
+        VerifyLively();
+    }
+
+    internal void VerifyEnvironment(Dictionary<string, object> settings)
+    {
+        nativeCulture = LivelyCulture(settings);
+        object arrangement;
+        double arrangementValue;
+        if (!settings.TryGetValue("WallpaperArrangement", out arrangement) || !NumberValue(arrangement, out arrangementValue) || arrangementValue != 0)
+            throw new SettingsFailure("This settings window supports Grid Wallpaper on the primary display in Lively's per-screen layout. Use that layout, or customize through Lively.");
+        object browser;
+        double browserValue;
+        if (!settings.TryGetValue("WebBrowser", out browser) || !NumberValue(browser, out browserValue) || browserValue != 1)
+            throw new SettingsFailure("Use Lively's WebView2 player for the desktop settings button, or customize the wallpaper through Lively.");
+        string library = NativePath(RequiredPath(settings, "WallpaperDir"));
+        if (!SamePath(Path.Combine(library, "wallpapers", "grid-wallpaper"), WallpaperDirectory))
+            throw new SettingsFailure("The wallpaper library changed. Rerun Grid Wallpaper setup to reconnect settings.");
+    }
+
+    internal void VerifyLively()
+    {
         int runningId = 0;
         DateTime oldest = DateTime.MaxValue;
         foreach (Process process in Process.GetProcessesByName("Lively"))
@@ -1296,6 +1320,7 @@ internal sealed class SettingsWindow : Form
     private readonly int displayGap;
     private SettingsData data;
     private Process livelyProcess;
+    private Process playbackProcess;
     private Point anchor;
     private bool allowVisible, openRequested, everOpened, ready, suspended, suspending, saving, refreshing, refreshAfterSave;
     private bool shuttingDown, shutdownClosing, permitClose, ownerExited, hostChanged, browserFailed, failureNotified;
@@ -1347,6 +1372,7 @@ internal sealed class SettingsWindow : Form
             hiddenSuspend.Dispose();
             if (launcher != null) { launcher.Close(); launcher.Dispose(); }
             if (livelyProcess != null) { livelyProcess.Exited -= LivelyExited; livelyProcess.Dispose(); }
+            if (playbackProcess != null) { playbackProcess.Exited -= PlaybackExited; playbackProcess.Dispose(); }
             browser.Dispose();
             if (Region != null) Region.Dispose();
         };
@@ -1456,6 +1482,11 @@ internal sealed class SettingsWindow : Form
             livelyProcess.EnableRaisingEvents = true;
             livelyProcess.Exited += LivelyExited;
             if (livelyProcess.HasExited) { LivelyExited(livelyProcess, EventArgs.Empty); return; }
+            playbackProcess = Process.GetProcessById(data.PlaybackProcessId);
+            playbackProcess.EnableRaisingEvents = true;
+            playbackProcess.Exited += PlaybackExited;
+            if (playbackProcess.HasExited) { PlaybackExited(playbackProcess, EventArgs.Empty); return; }
+            SettingsProgram.SetMetric(statusWindow, "PlaybackDetected", 1);
             string profile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Grid Wallpaper", "SettingsWebView2");
             CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, profile, null);
             if (IsDisposed || shuttingDown) return;
@@ -1806,6 +1837,11 @@ internal sealed class SettingsWindow : Form
     private void LivelyExited(object sender, EventArgs e)
     {
         QueueUI(delegate { ownerExited = true; RetireSurface(); RequestShutdown(); });
+    }
+
+    private void PlaybackExited(object sender, EventArgs e)
+    {
+        QueueUI(delegate { SettingsProgram.SetMetric(statusWindow, "PlaybackDetected", 0); StopForWallpaperChange(); });
     }
 
     private void RequestShutdown()
