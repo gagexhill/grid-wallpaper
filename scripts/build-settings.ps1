@@ -137,13 +137,14 @@ finally { $archive.Dispose() }
 
 $executablePath = Join-Path $outputDirectory 'grid-settings.exe'
 if ((Test-Path -LiteralPath $executablePath) -and ((Get-Item -LiteralPath $executablePath).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'The settings executable output must not be a link.' }
-$references = @('System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'System.Web.Extensions.dll')
+$references = @('System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'System.Web.Extensions.dll', 'System.Management.dll')
 $compilerArguments = @('/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/debug-', '/utf8output', "/out:$executablePath")
 foreach ($reference in $references) { $compilerArguments += '/reference:' + (Join-Path $frameworkDirectory $reference) }
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.Core.dll')
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.WinForms.dll')
 $compilerArguments += Join-Path $projectDirectory 'windows\settings-window.cs'
 $compilerArguments += Join-Path $projectDirectory 'windows\dome-telemetry.cs'
+$compilerArguments += Join-Path $projectDirectory 'windows\wallpaper-lifecycle.cs'
 $compilerArguments += $assemblyInfoPath
 & $compiler @compilerArguments
 if ($LASTEXITCODE -ne 0) { throw "The native settings compiler failed with exit code $LASTEXITCODE." }
