@@ -8,17 +8,24 @@ Set-StrictMode -Version Latest
 # The official SDK is build-only. The receiving laptop uses its installed WebView2 Runtime.
 $sdkVersion = '1.0.4191.47'
 $sdkSha512 = 'rfkb2hpx2GDAmM0OQmtaI44Yfqc8aUgy+P3jaAmpFl/aiET8nCufyKhwsNpTzZ65fsFA2aLxBKIoMB/66EHbjA=='
+
+# The Windows .NET Framework compiler stamps a timestamp and a fresh assembly identity
+# into every build, so identical source produced a different helper each time and no
+# recorded release digest could be reproduced, even on this machine. Microsoft's official
+# Roslyn toolset is also build-only, hosts on .NET Framework, and compiles deterministically.
+$compilerVersion = '5.9.0'
+$compilerSha512 = 'nueMs8iTpdfM4+tbhcqHbPI2DHQ7NMqVx3n1xAecnITF5iB3HtR5H40kfq0DLbI0/QgckG/dw30LeIdojmYa4Q=='
 $projectDirectory = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $distDirectory = Join-Path $projectDirectory 'dist'
 $sdkDirectory = Join-Path $distDirectory 'native-sdk'
+$compilerDirectory = Join-Path $distDirectory 'native-compiler'
 $outputDirectory = Join-Path $distDirectory 'settings-host'
 $frameworkDirectory = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
-$compiler = Join-Path $frameworkDirectory 'csc.exe'
-if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
-    throw 'The Windows .NET Framework C# compiler is required to build the settings window.'
+if (-not (Test-Path -LiteralPath $frameworkDirectory -PathType Container)) {
+    throw 'The installed .NET Framework reference assemblies are required to build the settings window.'
 }
 
-foreach ($directory in @($distDirectory, $sdkDirectory, $outputDirectory)) {
+foreach ($directory in @($distDirectory, $sdkDirectory, $compilerDirectory, $outputDirectory)) {
     $absoluteDirectory = [IO.Path]::GetFullPath($directory)
     if (-not $absoluteDirectory.StartsWith($projectDirectory + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Native build output must stay inside this checkout.'
@@ -34,6 +41,39 @@ function Get-PackageSha512([string] $Path) {
     $algorithm = [Security.Cryptography.SHA512]::Create()
     try { [Convert]::ToBase64String($algorithm.ComputeHash($stream)) }
     finally { $algorithm.Dispose(); $stream.Dispose() }
+}
+
+# Both build-only dependencies are pinned by exact version and SHA512, resolved through
+# NuGet's signed catalog, and cached under dist/. Neither is redistributed.
+function Resolve-PinnedNuGetPackage([string] $Id, [string] $Version, [string] $Sha512, [string] $CacheDirectory) {
+    $lowerId = $Id.ToLowerInvariant()
+    $packageName = "$lowerId.$Version.nupkg"
+    $packagePath = Join-Path $CacheDirectory $packageName
+    if (Test-Path -LiteralPath $packagePath) {
+        if ((Get-Item -LiteralPath $packagePath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "The $Id cache must not be a link." }
+        if ((Get-PackageSha512 $packagePath) -cne $Sha512) { throw "The cached $Id package failed integrity verification. Remove that cache file and retry." }
+        return $packagePath
+    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $registrationUri = "https://api.nuget.org/v3/registration5-gz-semver2/$lowerId/$Version.json"
+    $registration = Invoke-RestMethod -Uri $registrationUri -UseBasicParsing
+    $catalogUri = [Uri]$registration.catalogEntry
+    if ($catalogUri.Scheme -ne 'https' -or $catalogUri.Host -ne 'api.nuget.org' -or -not $catalogUri.AbsolutePath.StartsWith('/v3/catalog0/', [StringComparison]::Ordinal)) {
+        throw "NuGet returned an unexpected metadata location for $Id."
+    }
+    $catalog = Invoke-RestMethod -Uri $catalogUri.AbsoluteUri -UseBasicParsing
+    if ($catalog.id -cne $Id -or $catalog.version -cne $Version -or $catalog.packageHashAlgorithm -cne 'SHA512' -or $catalog.packageHash -cne $Sha512) {
+        throw "The published $Id metadata does not match the pinned dependency."
+    }
+    $downloadPath = Join-Path $CacheDirectory ($packageName + '.download')
+    if ((Test-Path -LiteralPath $downloadPath) -and ((Get-Item -LiteralPath $downloadPath).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "The $Id download must not be a link." }
+    try {
+        Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/$lowerId/$Version/$packageName" -OutFile $downloadPath -UseBasicParsing
+        if ((Get-PackageSha512 $downloadPath) -cne $Sha512) { throw "The downloaded $Id package failed SHA512 integrity verification." }
+        Move-Item -LiteralPath $downloadPath -Destination $packagePath -Force
+    }
+    finally { if (Test-Path -LiteralPath $downloadPath -PathType Leaf) { Remove-Item -LiteralPath $downloadPath -Force } }
+    $packagePath
 }
 
 function ConvertTo-CSharpString([string] $Value) {
@@ -86,33 +126,7 @@ $assemblyInfo = foreach ($attribute in $assemblyAttributes.Keys) {
 }
 [IO.File]::WriteAllLines($assemblyInfoPath, [string[]]$assemblyInfo, (New-Object Text.UTF8Encoding($false)))
 
-$packageName = "microsoft.web.webview2.$sdkVersion.nupkg"
-$packagePath = Join-Path $sdkDirectory $packageName
-if (Test-Path -LiteralPath $packagePath) {
-    if ((Get-Item -LiteralPath $packagePath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'The SDK cache must not be a link.' }
-    if ((Get-PackageSha512 $packagePath) -cne $sdkSha512) { throw 'The cached WebView2 SDK failed integrity verification. Remove that cache file and retry.' }
-}
-else {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $registrationUri = "https://api.nuget.org/v3/registration5-gz-semver2/microsoft.web.webview2/$sdkVersion.json"
-    $registration = Invoke-RestMethod -Uri $registrationUri -UseBasicParsing
-    $catalogUri = [Uri]$registration.catalogEntry
-    if ($catalogUri.Scheme -ne 'https' -or $catalogUri.Host -ne 'api.nuget.org' -or -not $catalogUri.AbsolutePath.StartsWith('/v3/catalog0/', [StringComparison]::Ordinal)) {
-        throw 'NuGet returned an unexpected SDK metadata location.'
-    }
-    $catalog = Invoke-RestMethod -Uri $catalogUri.AbsoluteUri -UseBasicParsing
-    if ($catalog.id -cne 'Microsoft.Web.WebView2' -or $catalog.version -cne $sdkVersion -or $catalog.packageHashAlgorithm -cne 'SHA512' -or $catalog.packageHash -cne $sdkSha512) {
-        throw 'The published WebView2 SDK metadata does not match the pinned dependency.'
-    }
-    $downloadPath = Join-Path $sdkDirectory ($packageName + '.download')
-    if ((Test-Path -LiteralPath $downloadPath) -and ((Get-Item -LiteralPath $downloadPath).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'The SDK download must not be a link.' }
-    try {
-        Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$sdkVersion/$packageName" -OutFile $downloadPath -UseBasicParsing
-        if ((Get-PackageSha512 $downloadPath) -cne $sdkSha512) { throw 'The downloaded WebView2 SDK failed SHA512 integrity verification.' }
-        Move-Item -LiteralPath $downloadPath -Destination $packagePath -Force
-    }
-    finally { if (Test-Path -LiteralPath $downloadPath -PathType Leaf) { Remove-Item -LiteralPath $downloadPath -Force } }
-}
+$packagePath = Resolve-PinnedNuGetPackage -Id 'Microsoft.Web.WebView2' -Version $sdkVersion -Sha512 $sdkSha512 -CacheDirectory $sdkDirectory
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($packagePath)
@@ -135,10 +149,36 @@ try {
 }
 finally { $archive.Dispose() }
 
+# Extract the compiler host beside its own dependencies. Only the files that sit directly
+# in the host folder are needed; the localized resource subfolders are skipped.
+$compilerPackagePath = Resolve-PinnedNuGetPackage -Id 'Microsoft.Net.Compilers.Toolset' -Version $compilerVersion -Sha512 $compilerSha512 -CacheDirectory $compilerDirectory
+$compiler = Join-Path $compilerDirectory 'csc.exe'
+$compilerArchive = [IO.Compression.ZipFile]::OpenRead($compilerPackagePath)
+try {
+    $hostPrefix = 'tasks/net472/'
+    $hostEntries = @($compilerArchive.Entries | Where-Object {
+        $_.FullName.StartsWith($hostPrefix, [StringComparison]::Ordinal) -and
+        $_.Name -and
+        -not $_.FullName.Substring($hostPrefix.Length).Contains('/')
+    })
+    if ($hostEntries.Count -lt 1) { throw 'The pinned compiler package is missing its .NET Framework host.' }
+    foreach ($entry in $hostEntries) {
+        $target = Join-Path $compilerDirectory $entry.Name
+        if ((Test-Path -LiteralPath $target) -and ((Get-Item -LiteralPath $target).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Compiler files must not be links.' }
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+    }
+}
+finally { $compilerArchive.Dispose() }
+if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'The pinned C# compiler was not extracted.' }
+
 $executablePath = Join-Path $outputDirectory 'grid-settings.exe'
 if ((Test-Path -LiteralPath $executablePath) -and ((Get-Item -LiteralPath $executablePath).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'The settings executable output must not be a link.' }
 $references = @('System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll', 'System.Web.Extensions.dll', 'System.Management.dll')
-$compilerArguments = @('/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/debug-', '/utf8output', "/out:$executablePath")
+# /deterministic makes the compiled bytes a function of the inputs alone, and /pathmap keeps
+# this checkout's absolute path out of them, so an identical source tree rebuilds to an
+# identical helper and a recorded release digest can be verified rather than merely recorded.
+# Determinism also depends on the output filename, which is fixed here.
+$compilerArguments = @('/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/debug-', '/deterministic', '/utf8output', "/pathmap:$projectDirectory=/_/", "/out:$executablePath")
 foreach ($reference in $references) { $compilerArguments += '/reference:' + (Join-Path $frameworkDirectory $reference) }
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.Core.dll')
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.WinForms.dll')
