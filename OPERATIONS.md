@@ -84,15 +84,17 @@ clone's `core.autocrlf` setting changed the ZIP checksum with no source change.
 `scripts/package.ps1` writes archive entries itself in a fixed ordinal order with
 the ZIP format's earliest representable timestamp, rather than `Compress-Archive`,
 which stored real last-write times and produced a different archive on every
-build. Two consecutive builds of the same source now differ only in
-`grid-settings.exe`; the other 19 entries are byte-identical with identical stored
-timestamps. The Windows `Microsoft.NET\Framework64` compiler has no
-`/deterministic` option, so the compiled helper still varies per build and a
-recorded helper or ZIP digest identifies one build rather than proving a
-reproducible one. Record digests as build identity on that basis, and treat a
-reproducible native build as open work in #28.
+build. The helper is compiled by Microsoft's pinned Roslyn toolset with
+`/deterministic` and `/pathmap`, because the Windows `Microsoft.NET\Framework64`
+compiler stamps a timestamp and a fresh assembly identity into every build and
+rejects `/deterministic`. Rebuilding an unchanged source tree now reproduces the
+helper and the archive byte for byte, so a recorded release digest can be
+verified rather than merely recorded. Determinism also depends on the output
+filename, which the build fixes. Recording a digest is therefore a claim that a
+rebuild can check; if a rebuild disagrees, the source or a pinned dependency
+changed.
 
-Packaging invokes `scripts/build-settings.ps1`. The build pins Microsoft's WebView2 NuGet SDK, verifies its SHA512 against official metadata, and compiles x64 with Windows' .NET Framework compiler. `package.json` owns the product version and description; `wallpaper/LivelyInfo.json` owns its product name and author. The build generates assembly attributes under ignored `dist/` and verifies the compiled executable's metadata. Full semantic versions identify prereleases; numeric file/assembly versions use major.minor.patch.0. Outputs and SDK cache stay under `dist/`; the package contains the helper, three required SDK libraries and the SDK license, with no debug symbols or machine configuration. Root `LICENSE.txt` owns the project's MIT terms; the runtime allowlist carries it into both the ZIP and installed folder alongside the separate `webview2-license.txt`. The receiving machine uses the WebView2 Runtime installed with Lively.
+Packaging invokes `scripts/build-settings.ps1`. The build pins two build-only NuGet dependencies, Microsoft's WebView2 SDK and Microsoft's Roslyn compiler toolset, resolving each by exact version through NuGet's catalog and verifying its SHA512 against the published metadata before use. Neither is redistributed: the SDK contributes three runtime libraries and its licence, and the compiler never leaves `dist/`. The compiler host is extracted from the package's .NET Framework host folder and compiles x64 deterministically; reference assemblies still come from the installed framework. Changing either pinned version requires updating its recorded SHA512 in the same change. `package.json` owns the product version and description; `wallpaper/LivelyInfo.json` owns its product name and author. The build generates assembly attributes under ignored `dist/` and verifies the compiled executable's metadata. Full semantic versions identify prereleases; numeric file/assembly versions use major.minor.patch.0. Outputs and SDK cache stay under `dist/`; the package contains the helper, three required SDK libraries and the SDK license, with no debug symbols or machine configuration. Root `LICENSE.txt` owns the project's MIT terms; the runtime allowlist carries it into both the ZIP and installed folder alongside the separate `webview2-license.txt`. The receiving machine uses the WebView2 Runtime installed with Lively.
 
 Inspect extracted contents before sharing. The repository is public following the Owner-approved review in #6; rescan changed source, metadata and artifacts before publishing a new release. History rewrites or credential rotation require an exact remediation plan; never copy sensitive values into tracking comments.
 

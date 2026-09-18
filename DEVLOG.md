@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-09-18 — Deterministic native build
+
+- Adopted Microsoft's official Roslyn compiler toolset, pinned to an exact version and SHA512 and resolved through NuGet's catalog, and compile the helper with `/deterministic` and `/pathmap`. The Windows .NET Framework compiler stamps a timestamp and a fresh assembly identity into every build and rejects `/deterministic`, so identical source produced a different helper each time and no recorded release digest could be reproduced, including on the build machine.
+- Rebuilding an unchanged tree now reproduces both the helper and the archive byte for byte. Three consecutive builds, one from a cleared cache, produced one helper digest and one ZIP digest. Determinism also depends on the output filename, which the build already fixes; an earlier experiment that varied it produced differing output and was the only trap found.
+- The toolset is build-only and MIT licensed. It is never redistributed, the package and its extracted host stay under ignored `dist/`, and the receiving laptop is unaffected. Reference assemblies still come from the installed framework; only the compiler moved.
+- Both pinned dependencies now share one resolver that verifies version, hash algorithm and SHA512 against NuGet's catalog before use, replacing a second copy of that logic. Changing either version requires updating its recorded hash in the same change.
+- Validated: native self-test exit 0 on the new binary, 17 runtime tests, 291 installer assertions and 19 browser tests. The helper digest matches the one produced by an independent scratch compile of the same sources, so the build integrates the compiler as intended rather than merely succeeding.
+
 ## 2026-09-18 — Keep public surfaces about this project only
 
 - A public surface audit found this repository disclosing things about work unrelated to it. The pre-push hook cited an external private repository and one of its internal section names, repository guidance named that same private document as the owner of company policy, an older issue repeated it, and a recent issue described host memory pressure in terms of the other software running on the development machine. None of it exposed a credential, endpoint or private content, but together it described the Owner's wider setup to anyone reading a public wallpaper project.
