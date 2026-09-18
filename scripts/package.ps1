@@ -27,6 +27,9 @@ $zip = Join-Path $destination 'grid-wallpaper-windows.zip'
 # ordinal order with the ZIP format's earliest representable timestamp instead, so
 # the recorded release SHA256 is reproducible from the same source tree.
 Add-Type -AssemblyName System.IO.Compression
+# A default hashtable compares keys case-insensitively, which is what a Windows
+# package needs: two entries differing only by case would collide on extraction,
+# so rejecting them here is deliberate rather than an oversight.
 $entryPaths = @{}
 foreach ($path in $paths) {
     $entryName = [IO.Path]::GetFileName($path)
@@ -36,7 +39,10 @@ foreach ($path in $paths) {
 $entryNames = [string[]]$entryPaths.Keys
 [Array]::Sort($entryNames, [StringComparer]::Ordinal)
 $fixedTimestamp = New-Object DateTimeOffset(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
-$zipStream = [IO.File]::Open($zip, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+# Write to a temporary file first. A run that fails partway through then leaves no
+# archive at all, rather than a truncated one that looks like a build output.
+$partialZip = "$zip.partial"
+$zipStream = [IO.File]::Open($partialZip, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try {
     $archive = New-Object IO.Compression.ZipArchive($zipStream, [IO.Compression.ZipArchiveMode]::Create, $true)
     try {
@@ -54,6 +60,7 @@ try {
     finally { $archive.Dispose() }
 }
 finally { $zipStream.Dispose() }
+Move-Item -LiteralPath $partialZip -Destination $zip -Force
 $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $destination 'grid-wallpaper-windows.zip.sha256'), "$hash  grid-wallpaper-windows.zip`n")
 Write-Output "Created $zip"
