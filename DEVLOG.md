@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-09-18 — Keep public surfaces about this project only
+
+- A public surface audit found this repository disclosing things about work unrelated to it. The pre-push hook cited an external private repository and one of its internal section names, repository guidance named that same private document as the owner of company policy, an older issue repeated it, and a recent issue described host memory pressure in terms of the other software running on the development machine. None of it exposed a credential, endpoint or private content, but together it described the Owner's wider setup to anyone reading a public wallpaper project.
+- Removed those references from the hook, the guidance, the ignore file and the affected issues, and replaced them with role-based descriptions that say what matters without naming anything external. Added a standing rule that commits, guidance, issues, pull requests, release notes and packaged files stay about this project only, including host measurements.
+- The legacy `Ventryn LLC` author string in the installer and its regression test is a deliberate exception. It must keep matching so an older installation still upgrades, and the licensing decisions in #17 and #18 already made that credit public.
+- Verified afterwards that no public issue or pull request text names another repository or product, and that no personal path, email address, account name or machine name appears in any tracked file or public discussion. Historical commits still contain the earlier guidance line; rewriting them would invalidate the published commit identities that the release evidence depends on, so that trade-off is recorded rather than taken unilaterally.
+
 ## 2026-09-18 — Laptop delivery accepted; hotplug tracked alone
 
 - The Owner confirmed normal wallpaper animation after the 2026-09-16 restart, supplying the visible-desktop half of the last open gate in #1. Native corroboration already covered the other half: warm-start helper and Lively restoring Grid to the connected primary, the stale saved display entry skipped without affecting the live selection, `startupRecovery: "skipped"`, and the installed helper matching its recorded hash with continuous uptime since.
