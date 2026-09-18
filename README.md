@@ -8,7 +8,7 @@ An offline animated grid for Windows, with wandering domes, mouse interaction, e
 
 Requires **x64 Windows 10/11** and **Lively Wallpaper**. Setup can install Lively for you. The custom desktop panel supports Lively's default **WebView2** player and **per-screen layout on the primary display**. Other arrangements can use Lively's native Customize command.
 
-This is a preview release. [Laptop acceptance](https://github.com/gagexhill/grid-wallpaper/issues/1) records completed checks and deferred scenarios; [open issues](https://github.com/gagexhill/grid-wallpaper/issues) track release finishing and known limitations.
+This is a preview release. [Laptop acceptance](https://github.com/gagexhill/grid-wallpaper/issues/1) records the completed checks; [open issues](https://github.com/gagexhill/grid-wallpaper/issues) track release finishing and known limitations, including the untested [display hotplug](https://github.com/gagexhill/grid-wallpaper/issues/30).
 
 ## Install on Windows
 

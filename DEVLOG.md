@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-09-18 — Laptop delivery accepted; hotplug tracked alone
+
+- The Owner confirmed normal wallpaper animation after the 2026-09-16 restart, supplying the visible-desktop half of the last open gate in #1. Native corroboration already covered the other half: warm-start helper and Lively restoring Grid to the connected primary, the stale saved display entry skipped without affecting the live selection, `startupRecovery: "skipped"`, and the installed helper matching its recorded hash with continuous uptime since.
+- Closed delivery #1 with every scenario accepted, and moved display hotplug to #30. It is the only scenario that was never performed, because no second monitor has been available; it needs actual hardware, since a guest, a controlled Lively restart and a resolution or scaling change do not establish it. This laptop still carries the duplicate saved primary-display identity that exposed the startup defect, which makes it a useful regression environment for that check.
+- Repointed the guidance that named #1 as the live delivery owner. Acceptance evidence for a scenario now goes to the issue that owns it, and #1 keeps the accepted history.
+
 ## 2026-09-18 — Reproducible package bytes and a local pre-push secret scan
 
 - Added a `pre-push` hook that runs Gitleaks over only the commits being pushed, with a logged `GITLEAKS_BYPASS` escape. It landed in PR #27 without a decision record, a documentation entry or a tracking issue; this entry and the `OPERATIONS.md` procedure close that gap. The hook is not installed by cloning, so each clone needs `git config core.hooksPath .githooks`; that step is now written down rather than assumed.
