@@ -1,0 +1,20 @@
+# Line endings decide package bytes, and package bytes are this repository's
+# release evidence. Without these rules a clone's core.autocrlf setting changes
+# the ZIP checksum without any source change, so recorded hashes in #1, #19 and
+# #20 could not be reproduced on another machine.
+#
+# Everything checks out with the endings named here rather than the local
+# setting, so the working tree, the flat package and the installed runtime are
+# byte-identical on every machine.
+
+* text=auto eol=lf
+
+# Windows PowerShell owns setup and validation; keep its historical CRLF bytes.
+*.ps1 text eol=crlf
+
+# The pre-push secret scan runs under sh and must stay LF.
+.githooks/pre-push text eol=lf
+
+# Reviewed runtime assets: never transform.
+*.jpg -text
+*.gif -text
