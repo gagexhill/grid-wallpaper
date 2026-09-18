@@ -2,7 +2,9 @@
 # Blocks a push that adds a secret. Scans only the commits being pushed, so old
 # history never slows or blocks new work.
 #
-# Standard and rationale: ventryn-cloud STANDARDS.md (Access And Credentials).
+# Rationale: a credential that reaches a remote is already exposed, so block it here
+# rather than rotating it afterwards. The standard this implements is maintained
+# outside this repository and is deliberately not named in a public file.
 # Install once per clone:  git config core.hooksPath .githooks
 # Known-public values (for example a Firebase web API key) belong in .gitleaks.toml.
 # Deliberate bypass, always announced and recorded:
