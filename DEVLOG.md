@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-09-18 — Reproducible package bytes and a local pre-push secret scan
+
+- Added a `pre-push` hook that runs Gitleaks over only the commits being pushed, with a logged `GITLEAKS_BYPASS` escape. It landed in PR #27 without a decision record, a documentation entry or a tracking issue; this entry and the `OPERATIONS.md` procedure close that gap. The hook is not installed by cloning, so each clone needs `git config core.hooksPath .githooks`; that step is now written down rather than assumed.
+- Recorded release digests were never reproducible. Line endings were unpinned, so a clone's `core.autocrlf` setting changed packaged bytes with no source change; the installed preview-6 runtime already differed from the committed source by one line ending in each consolidated module. `.gitattributes` now checks the runtime, metadata and documentation out as LF, keeps Windows PowerShell setup and validation at CRLF, and never transforms the reviewed thumbnail and preview assets. No file content changed and no stored blob moved.
+- `Compress-Archive` stored real last-write times, so every build produced a different archive. Packaging now writes entries itself in a fixed ordinal order with the ZIP format's earliest representable timestamp and rejects duplicate entry names. Two consecutive builds of one source tree now differ only in `grid-settings.exe`; the other 19 of 20 entries are byte-identical with identical stored timestamps.
+- The legacy Windows .NET Framework compiler rejects `/deterministic`, so the compiled helper still varies per build. A recorded helper or ZIP digest therefore identifies one build rather than proving a reproducible one, and `OPERATIONS.md` now says so. A pinned Roslyn toolchain would close it and is an Owner dependency decision in #28; binary post-processing was rejected as fragile ahead of signing.
+- Validated at each step with exit 0: 17 runtime tests, 291 installer assertions, 19 browser tests, a twice-built archive comparison, and a read-only setup preview from the extracted 20-file package.
+
 ## 2026-09-14 — Consolidate runtime ownership
 
 - Reduced the browser runtime from five JavaScript files to three: the renderer owns its telemetry publisher, and the settings module owns its Windows bridge. Kept the existing private scopes, execution order and host guards; no bundler, dependency or second animation scheduler was introduced.
