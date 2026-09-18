@@ -1,0 +1,4 @@
+title = "grid-wallpaper gitleaks configuration"
+
+[extend]
+useDefault = true

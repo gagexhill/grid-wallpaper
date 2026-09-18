@@ -1,0 +1,47 @@
+#!/bin/sh
+# Blocks a push that adds a secret. Scans only the commits being pushed, so old
+# history never slows or blocks new work.
+#
+# Standard and rationale: ventryn-cloud STANDARDS.md (Access And Credentials).
+# Install once per clone:  git config core.hooksPath .githooks
+# Known-public values (for example a Firebase web API key) belong in .gitleaks.toml.
+# Deliberate bypass, always announced and recorded:
+#   GITLEAKS_BYPASS=1 HOOK_BYPASS_REASON="why" git push ...
+set -eu
+
+if [ "${GITLEAKS_BYPASS:-}" = "1" ]; then
+  # An unexplained override cannot be reconstructed later, so every bypass leaves a record.
+  log="$(git rev-parse --git-common-dir)/hook-bypass.log"
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    printf '%s hook=pre-push user=%s %s %s -> %s reason=%s
+' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"       "$(git config user.name || echo unknown)" "$local_ref" "$local_sha" "$remote_ref"       "${HOOK_BYPASS_REASON:-none given}" >> "$log"
+  done
+  echo "pre-push: GITLEAKS_BYPASS=1 is set, so the secret scan was SKIPPED for this push." >&2
+  echo "pre-push: recorded in $log (set HOOK_BYPASS_REASON to say why)." >&2
+  exit 0
+fi
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-push: gitleaks is not installed, so this push cannot be scanned and was blocked." >&2
+  echo "pre-push: install it (winget install Gitleaks.Gitleaks), or bypass deliberately with GITLEAKS_BYPASS=1." >&2
+  exit 1
+fi
+
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # A branch deletion pushes no commits.
+  [ "$local_sha" = "$zero" ] && continue
+  if [ "$remote_sha" != "$zero" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    range="$remote_sha..$local_sha"
+  else
+    # New branch, or a remote tip this clone has never fetched: scan what no remote has yet.
+    range="$local_sha --not --remotes"
+  fi
+  if ! gitleaks git --no-banner --redact --log-opts="$range" .; then
+    echo "pre-push: gitleaks found a secret in the commits being pushed to $remote_ref. Nothing was pushed." >&2
+    echo "pre-push: remove it from those commits, or allowlist a known-public value in .gitleaks.toml." >&2
+    status=1
+  fi
+done
+exit $status
