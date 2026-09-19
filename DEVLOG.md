@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-09-18 - README restructured to the adopted structure
+
+- The Owner adopted one README structure for every repository, owned by the global `readme-structure` skill and made company policy in `ventryn-cloud/STANDARDS.md`. This README now follows it: thesis, badge and ownership block, table of contents, overview, problem, core concept, themes, tech stack, architecture, features, annotated source excerpts, getting started, file structure, concepts and owner. Tracked by issue #35.
+- Removal ownership moved to OPERATIONS.md. The old README carried the ordered removal commands and OPERATIONS.md said so in two places; the new structure has no section for them, so OPERATIONS.md now carries the commands themselves and both pointers were corrected in the same change. The install entry command stays in README, which OPERATIONS.md still states.
+- Writing the Tech Stack and Build sections caught stale text the old README had carried: it still described packaging as using the Windows .NET Framework compiler, which the deterministic-build change earlier the same day replaced with the pinned Roslyn toolset. Versions in the README are now read from `.node-version`, `package.json` and `scripts/build-settings.ps1` rather than prose.
+- Copyright stays `gagexhill` rather than a legal name. This repository is public and `LICENSE.txt` names that holder; changing an attribution on a published MIT release is a licensing decision, not a documentation one.
+
 ## 2026-09-18 — Deterministic native build
 
 - Adopted Microsoft's official Roslyn compiler toolset, pinned to an exact version and SHA512 and resolved through NuGet's catalog, and compile the helper with `/deterministic` and `/pathmap`. The Windows .NET Framework compiler stamps a timestamp and a fresh assembly identity into every build and rejects `/deterministic`, so identical source produced a different helper each time and no recorded release digest could be reproduced, including on the build machine.
