@@ -1,3 +1,12 @@
+// Assertion convention. `expect(locator)` and `expect.poll` retry until they pass;
+// a bare `expect(await page.evaluate(...))` reads once and fails immediately. Use a
+// retrying form for any value that must BECOME something after an action, so a host
+// under load cannot fail the run for scheduling reasons. A one-shot read never proved
+// the handler was immediate anyway; it only proved it beat one round trip.
+//
+// Keep one-shot reads for assertions of absence (nothing was recorded, no frame was
+// requested, a collection stayed empty) and for static geometry, where retrying would
+// weaken what the assertion means.
 const { test, expect } = require('@playwright/test');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
@@ -38,7 +47,7 @@ test('rapid reopen preserves eight functional presets and canonical controls', a
   await expect(page.locator('.preset')).toHaveCount(8);
   await page.locator('#setting-autoColor').check();
   await page.getByRole('button', { name: 'Dusk', exact: true }).click();
-  expect(await page.evaluate(() => GridWallpaper.getConfig().autoColor)).toBe(false);
+  await expect.poll(() => page.evaluate(() => GridWallpaper.getConfig().autoColor)).toBe(false);
   await expect(page.locator('#hex-bgColor')).toHaveValue('#2a1f1f');
   await expect(page.locator('#setting-fpsLimit')).toHaveValue('30');
 });
@@ -85,7 +94,7 @@ test('320px layout, practical targets, drag-to-bottom and color validation', asy
   await page.locator('#hex-bgColor').fill('#zzzzzz');
   await expect(page.locator('#hex-bgColor')).toHaveAttribute('aria-invalid', 'true');
   await page.locator('#hex-bgColor').fill('#abcdef');
-  expect(await page.evaluate(() => GridWallpaper.getConfig().bgColor)).toBe('#abcdef');
+  await expect.poll(() => page.evaluate(() => GridWallpaper.getConfig().bgColor)).toBe('#abcdef');
   await page.locator('#panel').evaluate(node => { node.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('narrow-settings.png') });
 });
@@ -161,17 +170,17 @@ test('settings motion preserves immediate values and respects reduced motion', a
   await page.getByRole('button', { name: 'Expand all sections' }).click();
   await expect(page.locator('#setting-vignette')).toBeChecked();
   await page.locator('#setting-vignette').uncheck();
-  expect(await page.evaluate(() => GridWallpaper.getConfig().vignette)).toBe(false);
-  expect(await page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0.14s, 0.14s');
+  await expect.poll(() => page.evaluate(() => GridWallpaper.getConfig().vignette)).toBe(false);
+  await expect.poll(() => page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0.14s, 0.14s');
   await page.locator('#setting-sizeScale').focus();
   await page.keyboard.press('ArrowRight');
-  expect(await page.locator('#setting-sizeScale').inputValue()).toBe('1.05');
-  expect(await page.evaluate(() => GridWallpaper.getConfig().sizeScale)).toBe(1.05);
+  await expect(page.locator('#setting-sizeScale')).toHaveValue('1.05');
+  await expect.poll(() => page.evaluate(() => GridWallpaper.getConfig().sizeScale)).toBe(1.05);
   await page.getByRole('button', { name: 'Reset all', exact: true }).click();
   await expect(page.locator('#setting-vignette')).toBeChecked();
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  expect(await page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0s');
-  expect(await page.locator('#dome-controls').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+  await expect.poll(() => page.locator('#setting-vignette').evaluate(input => getComputedStyle(input, '::after').transitionDuration)).toBe('0s');
+  await expect.poll(() => page.locator('#dome-controls').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
   await page.locator('#panel').evaluate(node => { node.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('restored-settings-motion.png') });
 });
@@ -214,7 +223,7 @@ test('live dome rails show actual rendered sizes while focus edits only the save
   await expect(rail).not.toHaveAttribute('aria-valuetext', /Live size/);
   await page.keyboard.press('ArrowRight');
   const edited = Number((before.config.domeSizes[0] + 0.01).toFixed(2));
-  expect(await page.evaluate(() => GridWallpaper.getConfig().domeSizes[0])).toBe(edited);
+  await expect.poll(() => page.evaluate(() => GridWallpaper.getConfig().domeSizes[0])).toBe(edited);
   await page.locator('#close-settings').focus();
   await expect(rail).toHaveAttribute('aria-valuetext', /Live size/);
   await expect.poll(() => page.evaluate(() => GridWallpaper.getDomeState()?.bases[0])).toBe(edited);
@@ -326,7 +335,7 @@ test('settings opening and closing have press feedback without shrinking the hit
   await page.keyboard.press('Escape');
   await page.keyboard.press('Enter');
   await page.getByRole('button', { name: 'Close grid settings', exact: true }).last().click();
-  expect(await page.evaluate(() => window.pressRecords.length)).toBe(4);
+  await expect.poll(() => page.evaluate(() => window.pressRecords.length)).toBe(4);
   expect(await menu.evaluate(button => button.offsetWidth)).toBe(48);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await menu.click(); await page.keyboard.press('Escape');
@@ -520,7 +529,7 @@ test('native live rails reject stale data, preserve base editing and never turn 
   await send({ ...frame, sequence: 3, sizes: bases.map(base => base * 0.6) });
   await expect(rail).toHaveValue('1');
   await page.keyboard.press('ArrowRight');
-  expect(await page.evaluate(() => GridWallpaper.getConfig().domeSizes[0])).toBe(1.01);
+  await expect.poll(() => page.evaluate(() => GridWallpaper.getConfig().domeSizes[0])).toBe(1.01);
   const changes = await page.evaluate(() => window.hostMessages.filter(message => message.kind === 'change'));
   expect(changes).toHaveLength(before.changes + 1);
   expect(changes.at(-1).properties).toEqual({ domeSize0: 1.01 });

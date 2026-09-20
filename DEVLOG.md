@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-09-19 — Browser assertions survive a loaded host
+
+- Two browser tests failed on separate loaded runs and passed on clean reruns, a different test each time. The cause was assertion form, not product behaviour: `expect(await page.evaluate(...))` reads once and fails immediately, while `expect(locator)` and `expect.poll` retry. On a host slow enough to stretch a one-second test past its fifteen-second timeout, a handler that had not yet run failed the assertion.
+- Converted the post-action reads to retrying forms without changing a single expected value, and recorded the convention in the spec so it is not reintroduced: retry anything that must become something after an action; keep one-shot reads for assertions of absence and static geometry, where retrying would weaken the meaning. Twenty one-shot reads remain deliberately.
+- A one-shot read never proved a handler was immediate. It proved only that the handler beat one round trip, which is a race rather than a guarantee, so removing it costs no real coverage. Immediacy where it matters is still asserted through the CSS transition duration.
+- Verified by the full ladder rather than a clean run alone: the suite passes, planting two wrong expected values in the converted assertions fails the run, and restoring them passes again. Retrying therefore does not mask a wrong value.
+- Also recorded that a chained shell invocation ending in a pipe reports only the last command's status, which let a failed suite read as a pass during earlier work.
+
 ## 2026-09-18 - README restructured to the adopted structure
 
 - The Owner adopted one README structure for every repository, owned by the global `readme-structure` skill and made company policy in `ventryn-cloud/STANDARDS.md`. This README now follows it: thesis, badge and ownership block, table of contents, overview, problem, core concept, themes, tech stack, architecture, features, annotated source excerpts, getting started, file structure, concepts and owner. Tracked by issue #35.
