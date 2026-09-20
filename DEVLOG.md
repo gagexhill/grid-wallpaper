@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-09-19 — Preview 6 accepted; earlier previews withdrawn
+
+- The Owner installed preview 6 from the published artifact and confirmed the desktop animates, which accepts it. The installed runtime matched all sixteen published files byte for byte, the helper matched the reproducible build digest, and the machine-specific host configuration and session bootstrap were preserved.
+- Withdrew previews 1 to 5 now that a fixed, accepted release exists. Previews 1 to 4 predate MIT licensing and were never valid rollback targets; preview 5 was kept only until preview 6 was accepted. Their version tags remain and can never be reused, so the history stays legible and no version number can be recycled.
+- Rollback never depended on a published download; it depends on retaining the reviewed package that is running. Corrected the runbook to say so rather than naming a release that is no longer published, since a withdrawn release would otherwise read as an available rollback target.
+- Preview 6 is the only published release. It carries the startup-display fix, the corrected native product metadata that preview 5 shipped as zeroes, and a reproducible package whose recorded digest a rebuild can verify.
+
 ## 2026-09-19 — Browser assertions survive a loaded host
 
 - Two browser tests failed on separate loaded runs and passed on clean reruns, a different test each time. The cause was assertion form, not product behaviour: `expect(await page.evaluate(...))` reads once and fails immediately, while `expect(locator)` and `expect.poll` retry. On a host slow enough to stretch a one-second test past its fifteen-second timeout, a handler that had not yet run failed the assertion.
