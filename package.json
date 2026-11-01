@@ -17,7 +17,7 @@
     "package": "set PSModulePath=&& powershell.exe -NoProfile -File scripts/package.ps1"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0",
+    "@playwright/test": "1.64.1",
     "gifenc": "1.0.3"
   }
 }
