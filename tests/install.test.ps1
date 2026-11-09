@@ -203,7 +203,7 @@ try {
     foreach ($runtimeName in $runtimeNames) {
         Write-Fixture (Join-Path $flatReleaseDirectory $runtimeName) ('flat release fixture: ' + $runtimeName)
     }
-    $flatPackageOnlyNames = @('wallpaper-files.json', 'install.ps1', 'README.md', 'OPERATIONS.md')
+    $flatPackageOnlyNames = @('wallpaper-files.json', 'install.ps1', 'Install-Grid.cmd', 'README.md', 'OPERATIONS.md')
     foreach ($packageOnlyName in $flatPackageOnlyNames) {
         Write-Fixture (Join-Path $flatReleaseDirectory $packageOnlyName) ('package-only fixture: ' + $packageOnlyName)
     }

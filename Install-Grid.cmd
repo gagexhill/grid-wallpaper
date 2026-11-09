@@ -1,0 +1,6 @@
+@echo off
+setlocal
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
+set "GridSetupExit=%ERRORLEVEL%"
+if not "%GridSetupExit%"=="0" pause
+exit /b %GridSetupExit%

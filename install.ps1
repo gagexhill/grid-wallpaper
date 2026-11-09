@@ -146,7 +146,7 @@ function Warm-SettingsHost($Destination) {
         } finally { $probe.Dispose() }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
-    Write-Warning 'The settings panel is still preparing. If it does not open, confirm Grid Wallpaper is active on the primary display with Lively''s WebView2 player.'
+    Write-Warning 'The settings panel is still preparing. If it does not open, confirm Grid Wallpaper is active on the primary display or in Span mode with Lively''s WebView2 player.'
 }
 
 function Find-Lively {
@@ -429,23 +429,11 @@ try {
         if (-not $lively) { throw 'WinGet finished, but Lively was not found. Open Lively once from Start, then rerun setup.' }
         $state = Get-LivelyState $lively -AllowInitializing
     }
-    if ($SkipLaunch) {
-        if (-not $state.SettingsReady) {
-            Write-Warning 'Lively has no readable library location yet. No wallpaper files were copied. Open Lively once, then rerun setup.'
-            exit 2
-        }
-        $installLock = Enter-InstallLock $state.Destination
-        Assert-Destination $state.Destination $metadata
-        Assert-HostConfig $state.Destination
-        Close-SettingsHost $state.Destination
-        Copy-Runtime $state.Destination
-        Write-HostConfig $state.Destination $lively
-        Register-SettingsLink $state.Destination
-        Write-Output ('Grid Wallpaper files installed and verified: ' + $state.Destination)
-        Write-Output 'Launch skipped. Rerun without -SkipLaunch to open the wallpaper. Lively owns customization and removal through its library.'
-        return
+    if ($SkipLaunch -and -not $state.SettingsReady) {
+        Write-Warning 'Lively has no readable library location yet. No wallpaper files were copied. Open Lively once, then rerun setup.'
+        exit 2
     }
-    if (-not (Test-LivelyRunning $lively.Executable) -or -not $state.SettingsReady) {
+    if (-not $SkipLaunch -and (-not (Test-LivelyRunning $lively.Executable) -or -not $state.SettingsReady)) {
         if ($state.FirstRun) { Write-Output 'Opening Lively. Startup and battery preferences are available in its settings.' }
         $null = Start-Process -FilePath $lively.Executable -ArgumentList 'app --showApp false' -WindowStyle Hidden -PassThru
         $deadline = [DateTime]::UtcNow.AddSeconds($ReadyTimeoutSeconds)
@@ -464,7 +452,7 @@ try {
     Assert-HostConfig $state.Destination
     $refreshLibrary = $false
     foreach ($file in @('LivelyInfo.json', $metadata.Thumbnail, $metadata.Preview)) {
-        if (-not $file) { continue }
+        if ($SkipLaunch -or -not $file) { continue }
         $installed = Join-Path $state.Destination $file
         if (-not (Test-Path -LiteralPath $installed -PathType Leaf) -or
             (Get-FileHash -LiteralPath $installed).Hash -cne (Get-FileHash -LiteralPath (Get-RuntimeSource $file)).Hash) {
@@ -476,6 +464,10 @@ try {
     Write-HostConfig $state.Destination $lively
     Register-SettingsLink $state.Destination
     Write-Output ('Grid Wallpaper files installed and verified: ' + $state.Destination)
+    if ($SkipLaunch) {
+        Write-Output 'Launch skipped. Open Lively and select Grid Wallpaper when ready.'
+        return
+    }
     $arguments = 'setwp --file "' + $state.CommandDirectory + '"'
     Invoke-LivelyCommand $arguments
     Warm-SettingsHost $state.Destination
