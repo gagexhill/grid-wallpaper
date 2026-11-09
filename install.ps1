@@ -27,10 +27,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-$runtimeFiles = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'wallpaper-files.json') -Raw | ConvertFrom-Json
-foreach ($file in $runtimeFiles) {
-    if ($file -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.(html|css|js|json|jpg|gif|exe|dll|txt)$') { throw 'Invalid runtime filename in wallpaper-files.json.' }
-}
 $packageId = 'rocksdanister.LivelyWallpaper'
 $normalDataDirectory = Join-Path $env:LOCALAPPDATA 'Lively Wallpaper'
 function Get-RuntimeSource($File) {
@@ -50,12 +46,6 @@ function Get-RuntimeSource($File) {
     if ((Get-Item -LiteralPath $sourcePath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Runtime sources must be regular files: $File" }
     return $sourcePath
 }
-
-$integration = Get-Content -LiteralPath (Get-RuntimeSource 'windows-integration.json') -Raw | ConvertFrom-Json
-if ($integration.settingsUri -notmatch '^[a-z][a-z0-9-]{2,50}:$') { throw 'Invalid settings link metadata.' }
-$settingsKey = 'HKCU:\Software\Classes\' + $integration.settingsUri.TrimEnd(':')
-$startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$startupName = 'GridWallpaperSettings'
 
 function Assert-SettingsLink {
     if (Test-Path -LiteralPath $settingsKey) {
@@ -141,12 +131,12 @@ function Warm-SettingsHost($Destination) {
             if (-not $probe.WaitForExit(2000)) { break }
             if ($probe.ExitCode -eq 0) {
                 $status = $probe.StandardOutput.ReadToEnd() | ConvertFrom-Json
-                if ($status.running -and $status.ready) { Write-Output 'Grid settings is ready for quick opening.'; return }
+                if ($status.running -and $status.ready) { Write-Verbose 'The floating settings button is ready.'; return }
             }
         } finally { $probe.Dispose() }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
-    Write-Warning 'The settings panel is still preparing. If it does not open, confirm Grid Wallpaper is active on the primary display or in Span mode with Lively''s WebView2 player.'
+    Write-Warning 'The settings button is still starting. If it does not appear, open Grid Wallpaper in Lively.'
 }
 
 function Find-Lively {
@@ -372,6 +362,7 @@ function Get-LivelyUiPath($Lively) {
 }
 
 function Invoke-LivelyCommand([string]$Arguments) {
+    Write-Verbose "Lively command: $Arguments"
     $command = Start-Process -FilePath $lively.Executable -ArgumentList $Arguments -WindowStyle Hidden -PassThru
     if (-not $command.WaitForExit(10000)) {
         throw 'Lively did not finish accepting a command within 10 seconds. Check its window and logs before rerunning setup; its processes were left running.'
@@ -382,6 +373,19 @@ function Invoke-LivelyCommand([string]$Arguments) {
 $installLock = $null
 try {
     if ($env:OS -ne 'Windows_NT') { throw 'Desktop installation requires Windows. Open grid-wallpaper.html in a browser to preview on other systems.' }
+    $manifest = Join-Path $PSScriptRoot 'wallpaper-files.json'
+    if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+        throw 'Setup files are missing. Extract the complete ZIP, then open Install-Grid.cmd again.'
+    }
+    $runtimeFiles = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+    foreach ($file in $runtimeFiles) {
+        if ($file -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*\.(html|css|js|json|jpg|gif|exe|dll|txt)$') { throw 'Invalid runtime filename in wallpaper-files.json.' }
+    }
+    $integration = Get-Content -LiteralPath (Get-RuntimeSource 'windows-integration.json') -Raw | ConvertFrom-Json
+    if ($integration.settingsUri -notmatch '^[a-z][a-z0-9-]{2,50}:$') { throw 'Invalid settings link metadata.' }
+    $settingsKey = 'HKCU:\Software\Classes\' + $integration.settingsUri.TrimEnd(':')
+    $startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    $startupName = 'GridWallpaperSettings'
     if ($RemoveSettingsLink) {
         Assert-SettingsLink
         if ($Preview) { Write-Output 'Would remove only the per-user Grid Wallpaper settings link and warm-start entry.' }
@@ -402,17 +406,18 @@ try {
     $lively = Find-Lively
     $state = Get-LivelyState $lively -AllowInitializing
     if ($Preview) {
-        Write-Output 'Preview only: no files, applications, wallpaper, or settings were changed.'
-        Write-Output 'Would register the per-user Grid settings link and a warm-start entry for responsive controls.'
-        if ($lively) { Write-Output ('Lively: ' + $lively.Executable) }
-        else { Write-Output ('Would install with WinGet: ' + $packageId + ' (official stable package).') }
+        Write-Output 'Preview only. No changes made.'
+        Write-Verbose 'Would register the settings link and prepare the floating button at sign-in.'
+        if ($lively) { Write-Verbose ('Lively: ' + $lively.Executable) }
+        else { Write-Output 'Setup would install Lively Wallpaper first.'; Write-Verbose ('WinGet package: ' + $packageId) }
         if ($state.SettingsReady) {
             Assert-Destination $state.Destination $metadata
             Assert-HostConfig $state.Destination
-            Write-Output ('Would copy ' + $runtimeFiles.Count + ' runtime files to: ' + $state.Destination)
-            if (-not $SkipLaunch) { Write-Output ('Would open Lively and submit: setwp --file "' + $state.CommandDirectory + '"') }
+            Write-Verbose ('Would copy ' + $runtimeFiles.Count + ' runtime files to: ' + $state.Destination)
+            Write-Output 'Setup would install Grid Wallpaper.'
+            if (-not $SkipLaunch) { Write-Verbose ('Would open Lively and submit: setwp --file "' + $state.CommandDirectory + '"') }
         } else {
-            Write-Output 'Lively has not supplied a valid library location yet. Setup will wait for its settings before copying files.'
+            Write-Output 'Setup would wait for Lively to finish its first run.'
         }
         return
     }
@@ -421,20 +426,23 @@ try {
         if (-not $winget) {
             throw 'WinGet is missing. Install Microsoft App Installer from https://aka.ms/getwinget, then rerun this command. Alternatively install Lively from https://www.rocksdanister.com/lively/.'
         }
-        Write-Output 'Installing Lively Wallpaper through WinGet. Its installer manages required Microsoft runtimes.'
-        & $winget.Source install --id $packageId --exact --source winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements --custom '/NOAUTOLAUNCH'
+        Write-Output 'Installing Lively Wallpaper...'
+        $installOutput = & $winget.Source install --id $packageId --exact --source winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements --custom '/NOAUTOLAUNCH'
         $installExit = $LASTEXITCODE
-        if ($installExit -ne 0) { throw "WinGet exited with code $installExit. Resolve the reported installation error and rerun setup." }
+        foreach ($line in $installOutput) { Write-Verbose $line }
+        if ($installExit -ne 0) {
+            throw "Lively could not be installed (WinGet exit $installExit). Install Lively from https://www.rocksdanister.com/lively/ and run setup again. For details, run install.ps1 -Verbose."
+        }
         $lively = Find-Lively
         if (-not $lively) { throw 'WinGet finished, but Lively was not found. Open Lively once from Start, then rerun setup.' }
         $state = Get-LivelyState $lively -AllowInitializing
     }
     if ($SkipLaunch -and -not $state.SettingsReady) {
-        Write-Warning 'Lively has no readable library location yet. No wallpaper files were copied. Open Lively once, then rerun setup.'
+        Write-Warning 'Open Lively and finish its first-run setup, then run Grid setup again.'
         exit 2
     }
     if (-not $SkipLaunch -and (-not (Test-LivelyRunning $lively.Executable) -or -not $state.SettingsReady)) {
-        if ($state.FirstRun) { Write-Output 'Opening Lively. Startup and battery preferences are available in its settings.' }
+        if ($state.FirstRun) { Write-Output 'Opening Lively Wallpaper...' }
         $null = Start-Process -FilePath $lively.Executable -ArgumentList 'app --showApp false' -WindowStyle Hidden -PassThru
         $deadline = [DateTime]::UtcNow.AddSeconds($ReadyTimeoutSeconds)
         do {
@@ -443,7 +451,7 @@ try {
             $ready = (Test-LivelyRunning $lively.Executable) -and $state.SettingsReady
         } while (-not $ready -and [DateTime]::UtcNow -lt $deadline)
         if (-not $ready) {
-            Write-Warning 'Lively did not supply readable settings in time. No wallpaper files were copied. Complete or open Lively, then rerun setup.'
+            Write-Warning 'Finish Lively''s first-run setup or open Lively, then run Grid setup again.'
             exit 2
         }
     }
@@ -463,16 +471,17 @@ try {
     Copy-Runtime $state.Destination
     Write-HostConfig $state.Destination $lively
     Register-SettingsLink $state.Destination
-    Write-Output ('Grid Wallpaper files installed and verified: ' + $state.Destination)
+    Write-Verbose ('Verified ' + $runtimeFiles.Count + ' installed files in: ' + $state.Destination)
+    Write-Output 'Grid Wallpaper installed.'
     if ($SkipLaunch) {
-        Write-Output 'Launch skipped. Open Lively and select Grid Wallpaper when ready.'
+        Write-Output 'To apply it, select Grid Wallpaper in Lively.'
         return
     }
     $arguments = 'setwp --file "' + $state.CommandDirectory + '"'
     Invoke-LivelyCommand $arguments
     Warm-SettingsHost $state.Destination
     if ($refreshLibrary) {
-        Write-Output 'Refreshing the Lively library window to show the wallpaper thumbnail and description.'
+        Write-Verbose 'Refreshing the Lively library window.'
         $uiPath = Get-LivelyUiPath $lively
         $oldUi = @(Get-Process -Name 'Lively.UI.WinUI' -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $uiPath })
         Invoke-LivelyCommand 'app --showApp false'
@@ -487,10 +496,9 @@ try {
             Invoke-LivelyCommand 'app --showApp true'
         }
     }
-    Write-Output 'Submitted Grid Wallpaper to Lively. Confirm the animated grid on your desktop; this command alone cannot verify rendering.'
-    Write-Output 'Open the grid settings button for your custom panel. Changes save through Lively. Startup, battery pause, displays, and removal are managed in Lively.'
+    Write-Output 'Check your desktop for Grid Wallpaper.'
 } catch {
-    Write-Error -Message $_.Exception.Message -ErrorAction Continue
+    [Console]::Error.WriteLine("Error: $($_.Exception.Message)")
     exit 1
 } finally {
     if ($installLock) {
