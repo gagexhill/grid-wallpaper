@@ -11,6 +11,7 @@
 
 # Windows PowerShell owns setup and validation; keep its historical CRLF bytes.
 *.ps1 text eol=crlf
+*.cmd text eol=crlf
 
 # The pre-push secret scan runs under sh and must stay LF.
 .githooks/pre-push text eol=lf

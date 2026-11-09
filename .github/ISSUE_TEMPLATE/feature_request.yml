@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an improvement to Grid Wallpaper
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe where the current workflow gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What should Grid do?
+      description: Include relevant details such as display count or placement mode.
+    validations:
+      required: true

@@ -45,8 +45,9 @@ internal sealed class WallpaperDisplay
         throw new SettingsFailure("Windows has not identified the primary display yet.");
     }
 
-    internal Dictionary<string, object> Select(IList layouts)
+    internal Dictionary<string, object> Select(IList layouts, bool span = false)
     {
+        if (span) return layouts.Count == 1 ? SettingsData.ObjectValue(layouts[0]) : null;
         Dictionary<string, object> selected = null;
         foreach (object item in layouts)
         {
@@ -195,7 +196,7 @@ internal sealed class WallpaperStartupRecovery
             if (lifetime == processLifetime && State >= 2) return;
             string settingsPath = Path.Combine(data.LivelyDataDirectory, "Settings.json");
             Dictionary<string, object> settings = SettingsData.ObjectValue(SettingsData.ReadJson(settingsPath));
-            try { data.VerifyEnvironment(settings); }
+            try { if (data.VerifyEnvironment(settings)) return; }
             catch { Claim(processLifetime); ShouldSubmit(processLifetime, "", 0, false, clock.ElapsedMilliseconds); throw; }
             string layoutPath = Path.Combine(data.LivelyDataDirectory, "WallpaperLayout.json");
             IList layouts = SettingsData.ReadJson(layoutPath) as IList;
@@ -298,6 +299,8 @@ internal sealed class WallpaperStartupRecovery
         };
         WallpaperDisplay display = new WallpaperDisplay { Id = currentId, Name = @"\\.\DISPLAY1", Count = 1 };
         Dictionary<string, object> old = layout(oldId, directory), current = layout(currentId, directory);
+        if (display.Select(new object[] { old }, true) != old || display.Select(new object[0], true) != null
+            || display.Select(new object[] { old, current }, true) != null) return 99;
         if (display.Select(new object[] { old, current }) != current || display.Select(new object[] { current, old }) != current) return 81;
         if (display.Select(new object[] { old }) != null || !display.CanRestore(new object[] { old }, directory, delegate(string path) { return path; })) return 82;
         if (display.CanRestore(new object[] { old, layout(currentId, @"C:\Library\other") }, directory, delegate(string path) { return path; })) return 83;

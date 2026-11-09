@@ -261,18 +261,19 @@ function frame(now) {
 
 ### Installation
 
-1. Open [Releases](https://github.com/gagexhill/grid-wallpaper/releases), expand **Assets** on the newest preview if needed, and download **grid-wallpaper-windows.zip**. Choose this file rather than the **Source code** archives.
-2. Right-click the ZIP in File Explorer, choose **Extract All**, then **Extract**. Open the extracted folder containing `install.ps1`.
-3. Click File Explorer's address bar, type `powershell`, and press **Enter**.
-4. Paste this and press **Enter**:
+1. Download the Windows ZIP from [Releases](https://github.com/gagexhill/grid-wallpaper/releases).
+2. In File Explorer, right-click the ZIP and choose **Extract All**.
+3. Open **Install-Grid.cmd** in the extracted folder. If Lively opens its first-run wizard, finish it and open the launcher again.
+
+Older previews without the launcher use this command from PowerShell in the extracted folder:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Show your desktop: the moving grid and its settings button should be there. Add `-Preview` for a setup check that changes nothing. To update, extract a newer release and run the same command — saved customization is preserved.
+For a continuous wallpaper across monitors, open Lively's library, click the monitor icon labeled **Active Wallpaper(s)**, expand **Placement Method**, and choose **Span**. Select **Grid Wallpaper** again in the library. The floating settings button stays on the primary display in builds with Span support. Use **Duplicate** to put a separate copy on each display and use Lively's **Customize** menu in that mode.
 
-> **Note:** If Lively shows its first-run wizard, finish it and run the same command again. If Windows Package Manager is missing, install or update Microsoft's [App Installer](https://learn.microsoft.com/en-us/windows/package-manager/winget/), reopen PowerShell and retry. [OPERATIONS.md](OPERATIONS.md#install-update-and-remove) owns the full setup, update, removal and recovery procedures.
+[OPERATIONS.md](OPERATIONS.md#install-update-and-remove) covers prerequisites, updates, removal, and troubleshooting.
 
 ### Build for Production
 
@@ -342,7 +343,7 @@ The installed package is flat. The folders above exist only in a source checkout
 
 [![GitHub](https://img.shields.io/badge/GitHub-gagexhill-181717?style=for-the-badge&logo=github)](https://github.com/gagexhill)
 
-Report a problem or suggest something through [issues](https://github.com/gagexhill/grid-wallpaper/issues/new) — include your Windows and Lively versions and the error text, with personal paths removed. Report vulnerabilities through [private security reporting](https://github.com/gagexhill/grid-wallpaper/security/advisories/new).
+Use [Discussions](https://github.com/gagexhill/grid-wallpaper/discussions) for setup questions and [Issues](https://github.com/gagexhill/grid-wallpaper/issues/new/choose) for bugs and requests. Read the [contributor guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before contributing. Report vulnerabilities through the [security policy](SECURITY.md).
 
 </div>
 

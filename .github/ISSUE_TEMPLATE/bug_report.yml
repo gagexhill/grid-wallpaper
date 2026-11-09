@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a problem installing, applying, or customizing Grid Wallpaper
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Report vulnerabilities privately through the [Security Policy](https://github.com/gagexhill/grid-wallpaper/security/policy)."
+  - type: input
+    id: versions
+    attributes:
+      label: Grid Wallpaper, Windows, and Lively versions
+      description: Include the Grid release tag and Lively version if available.
+    validations:
+      required: true
+  - type: input
+    id: displays
+    attributes:
+      label: Display setup
+      description: For display issues, include monitor count and the Lively placement mode.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include what you expected and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Optional evidence
+      description: Remove personal paths and account details. Keep installed session files private.

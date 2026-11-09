@@ -1087,13 +1087,13 @@ internal sealed class SettingsData
         if (recovery != null) recovery.Prepare(data, cancellation);
         data.ReloadProperties();
         data.PlaybackProcessId = WallpaperPlayback.Find(data, false);
-        if (data.PlaybackProcessId == 0) throw new SettingsFailure("Grid Wallpaper is not playing on the primary display. Apply it in Lively and reopen settings.");
+        if (data.PlaybackProcessId == 0) throw new SettingsFailure("Grid Wallpaper is not playing in the selected layout. Apply it in Lively and reopen settings.");
         return data;
     }
 
     internal void ReloadProperties()
     {
-        VerifyPrimary();
+        VerifyPlayback();
         Dictionary<string, object> definitions = ObjectValue(ReadJson(Path.Combine(WallpaperDirectory, "LivelyProperties.json")));
         Dictionary<string, object> saved = ObjectValue(ReadJson(PropertyPath));
         foreach (KeyValuePair<string, object> item in definitions)
@@ -1118,29 +1118,30 @@ internal sealed class SettingsData
         return full;
     }
 
-    internal void VerifyPrimary()
+    internal void VerifyPlayback()
     {
         Dictionary<string, object> settings = ObjectValue(ReadJson(Path.Combine(LivelyDataDirectory, "Settings.json")));
-        VerifyEnvironment(settings);
+        bool span = VerifyEnvironment(settings);
         IList layouts = ReadJson(Path.Combine(LivelyDataDirectory, "WallpaperLayout.json")) as IList;
         if (layouts == null) throw new SettingsFailure("Apply Grid Wallpaper on the primary display in Lively before opening settings.");
         WallpaperDisplay display = WallpaperDisplay.Current();
-        Dictionary<string, object> primary = display.Select(layouts);
-        object wallpaperPath, screenValue, indexValue;
+        Dictionary<string, object> active = display.Select(layouts, span);
+        object wallpaperPath, screenValue, indexValue, deviceId;
         double numericIndex;
-        if (primary == null || !primary.TryGetValue("LivelyInfoPath", out wallpaperPath) || !(wallpaperPath is string)
+        if (active == null || !active.TryGetValue("LivelyInfoPath", out wallpaperPath) || !(wallpaperPath is string)
             || !SamePath(NativePath((string)wallpaperPath), WallpaperDirectory))
-            throw new SettingsFailure("Grid Wallpaper must be active on the current primary display. Apply it in Lively and reopen settings.");
-        if (!primary.TryGetValue("LivelyScreen", out screenValue)
+            throw new SettingsFailure("Apply Grid Wallpaper to the primary display or use Span in Lively, then reopen settings.");
+        if (!active.TryGetValue("LivelyScreen", out screenValue)
+            || !ObjectValue(screenValue).TryGetValue("DeviceId", out deviceId) || String.IsNullOrWhiteSpace(deviceId as string)
             || !ObjectValue(screenValue).TryGetValue("Index", out indexValue) || !NumberValue(indexValue, out numericIndex)
             || numericIndex < 1 || numericIndex > 64 || Math.Truncate(numericIndex) != numericIndex)
-            throw new SettingsFailure("Lively's primary display could not be identified. Reapply Grid Wallpaper and reopen settings.");
+            throw new SettingsFailure("The Lively player display could not be identified. Reapply Grid Wallpaper and reopen settings.");
         int index = (int)numericIndex;
         string library = NativePath(RequiredPath(settings, "WallpaperDir"));
-        string propertyPath = Path.Combine(library, "SaveData", "wpdata", "grid-wallpaper", index.ToString(CultureInfo.InvariantCulture), "LivelyProperties.json");
-        if (PropertyPath != null && (!SamePath(propertyPath, PropertyPath) || index != DisplayIndex || DisplayId != display.Id))
+        string propertyPath = Path.Combine(library, "SaveData", "wpdata", "grid-wallpaper", span ? "span" : index.ToString(CultureInfo.InvariantCulture), "LivelyProperties.json");
+        if (PropertyPath != null && (!SamePath(propertyPath, PropertyPath) || index != DisplayIndex || !String.Equals(DisplayId, (string)deviceId, StringComparison.OrdinalIgnoreCase)))
             throw new SettingsFailure("The active display changed. Close and reopen wallpaper settings.");
-        // Match the exact v2.2.1 per-screen property factory path; never choose a directory arbitrarily.
+        // Match Lively 2.2.1's property factory path for the active placement.
         DirectoryInfo directory = new DirectoryInfo(Path.GetDirectoryName(propertyPath));
         while (directory != null && !SamePath(directory.FullName, library))
         {
@@ -1150,17 +1151,17 @@ internal sealed class SettingsData
         }
         PropertyPath = propertyPath;
         DisplayIndex = index;
-        DisplayId = display.Id;
+        DisplayId = (string)deviceId;
         VerifyLively();
     }
 
-    internal void VerifyEnvironment(Dictionary<string, object> settings)
+    internal bool VerifyEnvironment(Dictionary<string, object> settings)
     {
         nativeCulture = LivelyCulture(settings);
         object arrangement;
         double arrangementValue;
-        if (!settings.TryGetValue("WallpaperArrangement", out arrangement) || !NumberValue(arrangement, out arrangementValue) || arrangementValue != 0)
-            throw new SettingsFailure("This settings window supports Grid Wallpaper on the primary display in Lively's per-screen layout. Use that layout, or customize through Lively.");
+        if (!settings.TryGetValue("WallpaperArrangement", out arrangement) || !NumberValue(arrangement, out arrangementValue) || (arrangementValue != 0 && arrangementValue != 1))
+            throw new SettingsFailure("Use Screen or Span placement for the floating settings button. For Duplicate, use Customize in Lively.");
         object browser;
         double browserValue;
         if (!settings.TryGetValue("WebBrowser", out browser) || !NumberValue(browser, out browserValue) || browserValue != 1)
@@ -1168,6 +1169,7 @@ internal sealed class SettingsData
         string library = NativePath(RequiredPath(settings, "WallpaperDir"));
         if (!SamePath(Path.Combine(library, "wallpapers", "grid-wallpaper"), WallpaperDirectory))
             throw new SettingsFailure("The wallpaper library changed. Rerun Grid Wallpaper setup to reconnect settings.");
+        return arrangementValue == 1;
     }
 
     internal void VerifyLively()
@@ -1244,7 +1246,7 @@ internal sealed class SettingsData
 
     internal void SaveChange(string name, string argument)
     {
-        VerifyPrimary();
+        VerifyPlayback();
         ProcessStartInfo start = new ProcessStartInfo(LivelyExecutable);
         start.UseShellExecute = false;
         start.CreateNoWindow = true;
