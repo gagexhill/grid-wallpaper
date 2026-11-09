@@ -183,6 +183,7 @@ foreach ($reference in $references) { $compilerArguments += '/reference:' + (Joi
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.Core.dll')
 $compilerArguments += '/reference:' + (Join-Path $outputDirectory 'Microsoft.Web.WebView2.WinForms.dll')
 $compilerArguments += Join-Path $projectDirectory 'windows\settings-window.cs'
+$compilerArguments += Join-Path $projectDirectory 'windows\desktop-launcher.cs'
 $compilerArguments += Join-Path $projectDirectory 'windows\dome-telemetry.cs'
 $compilerArguments += Join-Path $projectDirectory 'windows\wallpaper-lifecycle.cs'
 $compilerArguments += $assemblyInfoPath

@@ -153,7 +153,8 @@ wallpaper/                      ← everything that ships to the desktop
 
 windows/                        ← native desktop integration
 │
-├── settings-window.cs          ← desktop button, borderless panel, WebView2 lifecycle
+├── desktop-launcher.cs        ← floating button, drag, and placement geometry
+├── settings-window.cs          ← borderless panel and WebView2 lifecycle
 ├── wallpaper-lifecycle.cs      ← player detection, supervision, startup recovery
 └── dome-telemetry.cs           ← loopback WebSocket carrying live dome sizes
 
@@ -263,15 +264,17 @@ function frame(now) {
 
 1. Download the Windows ZIP from [Releases](https://github.com/gagexhill/grid-wallpaper/releases).
 2. In File Explorer, right-click the ZIP and choose **Extract All**.
-3. Open **Install-Grid.cmd** in the extracted folder. If Lively opens its first-run wizard, finish it and open the launcher again.
+3. Open **Install-Grid.cmd** if it is included in the extracted folder. For the published Preview 6 ZIP, run the PowerShell command below.
 
-Older previews without the launcher use this command from PowerShell in the extracted folder:
+Run this from PowerShell in the extracted folder:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-For a continuous wallpaper across monitors, open Lively's library, click the monitor icon labeled **Active Wallpaper(s)**, expand **Placement Method**, and choose **Span**. Select **Grid Wallpaper** again in the library. The floating settings button stays on the primary display in builds with Span support. Use **Duplicate** to put a separate copy on each display and use Lively's **Customize** menu in that mode.
+If Lively opens its first-run wizard, finish it and repeat the same setup step.
+
+For a continuous wallpaper across monitors, open Lively's library, click the monitor icon labeled **Active Wallpaper(s)**, expand **Placement Method**, and choose **Span**. Select **Grid Wallpaper** again in the library. On builds with Span support, open the floating settings button on the primary display to customize Grid. In Preview 6, use the **Customize** menu in Lively for Span. Use **Duplicate** to put a separate copy on each display and use Lively's **Customize** menu in that mode.
 
 [OPERATIONS.md](OPERATIONS.md#install-update-and-remove) covers prerequisites, updates, removal, and troubleshooting.
 
@@ -325,7 +328,7 @@ The installed package is flat. The folders above exist only in a source checkout
 | **Canvas 2D and typed-array vertex buffers** | `draw()` in `grid-wallpaper.js`, reusing `points` and `glow` across frames |
 | **Squared-distance culling** | Dome and wave bounding checks, avoiding `Math.sqrt` on rejected vertices |
 | **Linear interpolation for motion smoothing** | `lerpSpeed` applied to dome position in `grid-wallpaper.js` |
-| **Custom URI protocol activation** | `hostSettings.settingsUri` in `grid-config.js`, parsed by `windows/settings-window.cs` |
+| **Custom URI protocol activation** | `hostSettings.settingsUri` in `grid-config.js`, parsed by `windows/desktop-launcher.cs` |
 | **WebView2 embedding and suspension** | `windows/settings-window.cs` — hidden grace period, then suspend |
 | **Loopback WebSocket with a session capability** | `windows/dome-telemetry.cs` — `HttpListener`, endpoint checks, strict frame validation |
 | **Per-monitor DPI and work-area geometry** | Panel anchoring in `windows/settings-window.cs` |
