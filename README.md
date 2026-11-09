@@ -1,4 +1,4 @@
-# 🖥️ Grid Wallpaper — Preview 6
+# 🖥️ Grid Wallpaper — Interactive Windows wallpaper
 
 > *"A desktop wallpaper is the one surface you look at all day and are never allowed to touch. Grid Wallpaper gives it back."*
 

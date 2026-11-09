@@ -491,6 +491,32 @@ try {
     Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Collision handling must preserve unrelated registrations.'
     Write-Output 'PASS settings link ownership collisions and exact removal'
 
+    $incompletePackage = Join-Path $fixtureDirectory 'synthetic incomplete package'
+    $null = [IO.Directory]::CreateDirectory($incompletePackage)
+    $incompleteInstaller = Join-Path $incompletePackage 'install.ps1'
+    Copy-Item -LiteralPath $installerPath -Destination $incompleteInstaller
+    $start = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'powershell.exe'))
+    $start.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $incompleteInstaller + '" -Preview'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        if (-not $process.WaitForExit(10000)) {
+            $process.Kill()
+            $process.WaitForExit()
+            throw 'The incomplete-package fixture did not finish within 10 seconds.'
+        }
+        Assert-Check ($process.ExitCode -eq 1) 'An incomplete package must exit with code 1.'
+        Assert-Check ($process.StandardOutput.ReadToEnd().Trim() -eq '') 'A failed preview must keep stdout empty.'
+        $errorText = $process.StandardError.ReadToEnd().Trim()
+        Assert-Check ($errorText -eq 'Error: Setup files are missing. Extract the complete ZIP, then open Install-Grid.cmd again.') 'An incomplete package must explain how to recover on one stderr line.'
+    } finally {
+        $process.Dispose()
+    }
+    Write-Output 'PASS incomplete package reports one actionable setup error'
+
     Write-Output ('Installer regression checks passed: ' + $assertionCount + ' assertions. Only isolated temporary files and GUID-owned test registrations were used.')
 } finally {
     if ($flatModule) { Remove-Module -ModuleInfo $flatModule -Force }
