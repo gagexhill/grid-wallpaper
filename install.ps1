@@ -259,36 +259,101 @@ function Assert-Destination($Destination, $Metadata) {
     }
 }
 
+function Enter-InstallLock($Destination) {
+    $path = [IO.Path]::GetFullPath($Destination).TrimEnd('\').ToUpperInvariant()
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($path))).Replace('-', '') }
+    finally { $sha.Dispose() }
+    $mutex = [Threading.Mutex]::new($false, "Global\GridWallpaperInstall-$hash")
+    try {
+        try { $acquired = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw 'Another Grid Wallpaper setup is using this destination. Wait for it to finish, then rerun setup.' }
+        return $mutex
+    } catch {
+        $mutex.Dispose()
+        throw
+    }
+}
+
 function Copy-Runtime($Destination) {
     $retiredFiles = @('grid-live-telemetry.js', 'grid-native-settings.js')
     foreach ($file in ($runtimeFiles + $retiredFiles)) {
         $targetPath = Join-Path $Destination $file
         if (Test-Path -LiteralPath $targetPath) {
-            $target = Get-Item -LiteralPath $targetPath
+            $target = Get-Item -LiteralPath $targetPath -Force
             if ($target.PSIsContainer -or ($target.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
                 throw "A runtime target is not a regular file: $targetPath"
             }
         }
     }
+
     $null = New-Item -ItemType Directory -Path $Destination -Force
-    foreach ($file in $runtimeFiles) {
-        $sourcePath = Get-RuntimeSource $file
-        $targetPath = Join-Path $Destination $file
-        if ([IO.Path]::GetFullPath($sourcePath) -ieq [IO.Path]::GetFullPath($targetPath)) { continue }
-        Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
-        if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash) {
-            throw "Installed file verification failed: $file"
-        }
-    }
-    # Retire only the merged helpers, after every replacement has been verified.
-    foreach ($file in $retiredFiles) {
-        $targetPath = Join-Path $Destination $file
-        if (Test-Path -LiteralPath $targetPath) {
-            $target = Get-Item -LiteralPath $targetPath
-            if ($target.PSIsContainer -or ($target.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                throw "A retired runtime target is not a regular file: $targetPath"
+    $transaction = Join-Path (Split-Path $Destination -Parent) ('.grid-install-' + [Guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $transaction
+    $staged = @{}
+    $backup = @{}
+    $added = @()
+    $preserve = $false
+    try {
+        foreach ($file in $runtimeFiles) {
+            $sourcePath = Get-RuntimeSource $file
+            $targetPath = Join-Path $Destination $file
+            if ([IO.Path]::GetFullPath($sourcePath) -ieq [IO.Path]::GetFullPath($targetPath)) { continue }
+            $staged[$file] = Join-Path $transaction ("stage-" + $file)
+            $hash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
+            [IO.File]::Copy($sourcePath, $staged[$file])
+            if ($hash -cne (Get-FileHash -LiteralPath $staged[$file] -Algorithm SHA256).Hash) {
+                throw "Staged file verification failed: $file"
             }
-            Remove-Item -LiteralPath $targetPath -Force
+        }
+        foreach ($file in $runtimeFiles) {
+            if (-not $staged.ContainsKey($file)) { continue }
+            $targetPath = Join-Path $Destination $file
+            if ([IO.File]::Exists($targetPath)) {
+                $backup[$file] = Join-Path $transaction ("backup-" + $file)
+                [IO.File]::Replace($staged[$file], $targetPath, $backup[$file])
+            } else {
+                [IO.File]::Move($staged[$file], $targetPath)
+                $added += $file
+            }
+        }
+        foreach ($file in $retiredFiles) {
+            $targetPath = Join-Path $Destination $file
+            if ([IO.File]::Exists($targetPath)) {
+                $backup[$file] = Join-Path $transaction ("backup-" + $file)
+                [IO.File]::Move($targetPath, $backup[$file])
+            }
+        }
+    } catch {
+        $failure = $_
+        $restoreFailures = @(
+            foreach ($file in $added) {
+                try { [IO.File]::Delete((Join-Path $Destination $file)) }
+                catch { "$file ($($_.Exception.Message))" }
+            }
+            foreach ($file in $backup.Keys) {
+                if (-not [IO.File]::Exists($backup[$file])) { continue }
+                $targetPath = Join-Path $Destination $file
+                try {
+                    if ([IO.File]::Exists($targetPath)) { [IO.File]::Replace($backup[$file], $targetPath, [NullString]::Value) }
+                    else { [IO.File]::Move($backup[$file], $targetPath) }
+                } catch { "$file ($($_.Exception.Message))" }
+            }
+        )
+        if ($restoreFailures.Count) {
+            $preserve = $true
+            throw "Runtime upgrade failed: $($failure.Exception.Message). Restoration failed for $($restoreFailures -join ', '). Recovery files remain in $transaction."
+        }
+        throw $failure
+    } finally {
+        if (-not $preserve) {
+            try {
+                foreach ($path in (@($staged.Values) + @($backup.Values))) { [IO.File]::Delete($path) }
+                [IO.Directory]::Delete($transaction)
+            } catch {
+                Write-Warning "Could not clean up the setup staging directory $transaction. $($_.Exception.Message)"
+            }
         }
     }
 }
@@ -314,6 +379,7 @@ function Invoke-LivelyCommand([string]$Arguments) {
     if ($command.ExitCode -ne 0) { throw "Lively exited with code $($command.ExitCode) while accepting a command." }
 }
 
+$installLock = $null
 try {
     if ($env:OS -ne 'Windows_NT') { throw 'Desktop installation requires Windows. Open grid-wallpaper.html in a browser to preview on other systems.' }
     if ($RemoveSettingsLink) {
@@ -368,6 +434,7 @@ try {
             Write-Warning 'Lively has no readable library location yet. No wallpaper files were copied. Open Lively once, then rerun setup.'
             exit 2
         }
+        $installLock = Enter-InstallLock $state.Destination
         Assert-Destination $state.Destination $metadata
         Assert-HostConfig $state.Destination
         Close-SettingsHost $state.Destination
@@ -392,6 +459,7 @@ try {
             exit 2
         }
     }
+    $installLock = Enter-InstallLock $state.Destination
     Assert-Destination $state.Destination $metadata
     Assert-HostConfig $state.Destination
     $refreshLibrary = $false
@@ -432,4 +500,9 @@ try {
 } catch {
     Write-Error -Message $_.Exception.Message -ErrorAction Continue
     exit 1
+} finally {
+    if ($installLock) {
+        $installLock.ReleaseMutex()
+        $installLock.Dispose()
+    }
 }

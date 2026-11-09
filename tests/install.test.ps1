@@ -67,7 +67,7 @@ try {
     $parseErrors = $null
     $installerAst = [Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$parseTokens, [ref]$parseErrors)
     Assert-Check ($parseErrors.Count -eq 0) 'The installer must parse in Windows PowerShell 5.1.'
-    $helperNames = @('Get-LivelyState', 'Assert-Destination', 'Get-RuntimeSource', 'Copy-Runtime',
+    $helperNames = @('Get-LivelyState', 'Assert-Destination', 'Get-RuntimeSource', 'Enter-InstallLock', 'Copy-Runtime',
         'Assert-SettingsLink', 'Register-SettingsLink', 'Remove-SettingsLink', 'Assert-HostConfig', 'Write-HostConfig', 'Get-LivelyUiPath')
     $helperDefinitions = foreach ($helperName in $helperNames) {
         $helperMatches = @($installerAst.FindAll({
@@ -285,7 +285,7 @@ try {
     $lockedRuntime = [IO.File]::Open((Join-Path $failedUpgrade $runtimeNames[-1]), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     try {
         Assert-Fails { Copy-Runtime $failedUpgrade } 'A locked later runtime file must fail the upgrade.'
-        Assert-Check ((Get-Content -LiteralPath (Join-Path $failedUpgrade $runtimeNames[0]) -Raw) -ceq 'updated runtime fixture') 'The copy-failure fixture must reach copying before failing.'
+        Assert-Check ((Get-Content -LiteralPath (Join-Path $failedUpgrade $runtimeNames[0]) -Raw) -ceq 'outdated first file') 'A failure on a later file must restore earlier runtime bytes.'
         foreach ($retiredName in $retiredNames) {
             Assert-Check ((Get-Content -LiteralPath (Join-Path $failedUpgrade $retiredName) -Raw) -ceq 'retain until verified') 'Failed upgrades must retain the retired helpers.'
         }
@@ -295,6 +295,26 @@ try {
         Assert-Check (-not (Test-Path -LiteralPath (Join-Path $failedUpgrade $retiredName))) 'Retry after releasing a copy failure must finish retirement.'
     }
     Write-Output 'PASS verified helper retirement, same-folder upgrades and failed-copy recovery'
+
+    $installLock = Enter-InstallLock $failedUpgrade
+    $contender = [PowerShell]::Create()
+    try {
+        $null = $contender.AddScript({
+            param($ModulePath, $Destination)
+            $ErrorActionPreference = 'Stop'
+            Import-Module -Name $ModulePath -DisableNameChecking
+            Enter-InstallLock $Destination
+        }).AddArgument($modulePath).AddArgument($failedUpgrade.ToUpperInvariant() + '\')
+        Assert-Fails { $contender.Invoke() } 'Concurrent setup must be rejected even with alternate path casing.' 'Another Grid Wallpaper setup'
+    } finally {
+        $contender.Dispose()
+        $installLock.ReleaseMutex()
+        $installLock.Dispose()
+    }
+    $installLock = Enter-InstallLock $failedUpgrade
+    $installLock.ReleaseMutex()
+    $installLock.Dispose()
+    Write-Output 'PASS destination lock rejects concurrent setup and permits retry'
 
     $legacyMetadata = $metadataText | ConvertFrom-Json
     $legacyMetadata.Author = 'Ventryn LLC'
