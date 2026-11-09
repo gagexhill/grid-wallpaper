@@ -117,7 +117,7 @@ function Close-SettingsHost($Destination) {
 
 function Warm-SettingsHost($Destination) {
     $executable = Join-Path $Destination 'grid-settings.exe'
-    $null = Start-Process -FilePath $executable -ArgumentList '--warm' -WindowStyle Hidden -PassThru
+    $null = Start-Process -FilePath $executable -ArgumentList '--warm' -WorkingDirectory $Destination -WindowStyle Hidden -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     do {
         $start = New-Object Diagnostics.ProcessStartInfo
