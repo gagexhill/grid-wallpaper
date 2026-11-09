@@ -489,13 +489,33 @@ internal sealed class SettingsData
     internal string WallpaperDirectory;
     internal string LivelyExecutable;
     internal string LivelyDataDirectory;
-    internal string PropertyPath;
-    internal int DisplayIndex;
     internal int LivelyProcessId;
     internal int PlaybackProcessId;
-    internal string DisplayId;
+    private PlaybackTarget target;
+    internal string DisplayId { get { return target.DisplayId; } }
     internal Dictionary<string, object> Properties;
     private CultureInfo nativeCulture = CultureInfo.InvariantCulture;
+
+    private sealed class PlaybackTarget
+    {
+        internal readonly string PropertyPath;
+        internal readonly int DisplayIndex;
+        internal readonly string DisplayId;
+
+        internal PlaybackTarget(string propertyPath, int displayIndex, string displayId)
+        {
+            PropertyPath = propertyPath;
+            DisplayIndex = displayIndex;
+            DisplayId = displayId;
+        }
+
+        internal void VerifySame(PlaybackTarget current)
+        {
+            if (!SamePath(PropertyPath, current.PropertyPath) || DisplayIndex != current.DisplayIndex
+                || !String.Equals(DisplayId, current.DisplayId, StringComparison.OrdinalIgnoreCase))
+                throw new SettingsFailure("The active display changed. Close and reopen wallpaper settings.");
+        }
+    }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern bool GetUserPreferredUILanguages(uint flags, out uint count, StringBuilder languages, ref uint size);
@@ -575,9 +595,9 @@ internal sealed class SettingsData
 
     internal void ReloadProperties()
     {
-        VerifyPlayback();
+        PlaybackTarget activeTarget = VerifyPlayback();
         Dictionary<string, object> definitions = ObjectValue(ReadJson(Path.Combine(WallpaperDirectory, "LivelyProperties.json")));
-        Dictionary<string, object> saved = ObjectValue(ReadJson(PropertyPath));
+        Dictionary<string, object> saved = ObjectValue(ReadJson(activeTarget.PropertyPath));
         foreach (KeyValuePair<string, object> item in definitions)
         {
             Dictionary<string, object> definition = ObjectValue(item.Value);
@@ -600,7 +620,7 @@ internal sealed class SettingsData
         return full;
     }
 
-    internal void VerifyPlayback()
+    private PlaybackTarget VerifyPlayback()
     {
         Dictionary<string, object> settings = ObjectValue(ReadJson(Path.Combine(LivelyDataDirectory, "Settings.json")));
         bool span = VerifyEnvironment(settings);
@@ -621,8 +641,8 @@ internal sealed class SettingsData
         int index = (int)numericIndex;
         string library = NativePath(RequiredPath(settings, "WallpaperDir"));
         string propertyPath = Path.Combine(library, "SaveData", "wpdata", "grid-wallpaper", span ? "span" : index.ToString(CultureInfo.InvariantCulture), "LivelyProperties.json");
-        if (PropertyPath != null && (!SamePath(propertyPath, PropertyPath) || index != DisplayIndex || !String.Equals(DisplayId, (string)deviceId, StringComparison.OrdinalIgnoreCase)))
-            throw new SettingsFailure("The active display changed. Close and reopen wallpaper settings.");
+        PlaybackTarget current = new PlaybackTarget(propertyPath, index, (string)deviceId);
+        if (target != null) target.VerifySame(current);
         // Match Lively 2.2.1's property factory path for the active placement.
         DirectoryInfo directory = new DirectoryInfo(Path.GetDirectoryName(propertyPath));
         while (directory != null && !SamePath(directory.FullName, library))
@@ -631,10 +651,9 @@ internal sealed class SettingsData
                 throw new SettingsFailure("The wallpaper settings directory is invalid. Rerun setup.");
             directory = directory.Parent;
         }
-        PropertyPath = propertyPath;
-        DisplayIndex = index;
-        DisplayId = (string)deviceId;
         VerifyLively();
+        if (target == null) target = current;
+        return target;
     }
 
     internal bool VerifyEnvironment(Dictionary<string, object> settings)
@@ -728,14 +747,14 @@ internal sealed class SettingsData
 
     internal void SaveChange(string name, string argument)
     {
-        VerifyPlayback();
+        PlaybackTarget activeTarget = VerifyPlayback();
         ProcessStartInfo start = new ProcessStartInfo(LivelyExecutable);
         start.UseShellExecute = false;
         start.CreateNoWindow = true;
         start.WorkingDirectory = Path.GetDirectoryName(LivelyExecutable);
         // Names come from the installed schema; arguments contain only validated scalar characters.
         string cliArgument = Object.Equals(ObjectValue(Properties[name])["type"], "slider") ? NativeSliderArgument(argument, nativeCulture) : argument;
-        start.Arguments = "setprop --monitor " + DisplayIndex.ToString(CultureInfo.InvariantCulture) + " --property \"" + name + "=" + cliArgument + "\"";
+        start.Arguments = "setprop --monitor " + activeTarget.DisplayIndex.ToString(CultureInfo.InvariantCulture) + " --property \"" + name + "=" + cliArgument + "\"";
         using (Process process = Process.Start(start))
         {
             if (!process.WaitForExit(5000))
@@ -749,7 +768,7 @@ internal sealed class SettingsData
         {
             try
             {
-                Dictionary<string, object> saved = ObjectValue(ReadJson(PropertyPath));
+                Dictionary<string, object> saved = ObjectValue(ReadJson(activeTarget.PropertyPath));
                 object control, value;
                 if (saved.TryGetValue(name, out control) && ObjectValue(control).TryGetValue("value", out value)
                     && ValidateChange(name, value) == argument) return;
@@ -784,6 +803,16 @@ internal sealed class SettingsData
         }
         if (!SamePath(RequiredPath(new Dictionary<string, object> { { "path", Path.GetTempPath() } }, "path"), Path.GetTempPath())) return 10;
         if (NativeSliderArgument("1.7", new CultureInfo("fr-FR")) != "1,7" || NativeSliderArgument("1.7", CultureInfo.InvariantCulture) != "1.7") return 11;
+        PlaybackTarget screenTarget = new PlaybackTarget(@"C:\Synthetic\Grid\1\LivelyProperties.json", 1, "synthetic-display");
+        screenTarget.VerifySame(new PlaybackTarget(@"c:\synthetic\grid\1\LivelyProperties.json", 1, "SYNTHETIC-DISPLAY"));
+        foreach (PlaybackTarget changed in new PlaybackTarget[] {
+            new PlaybackTarget(@"C:\Synthetic\Grid\span\LivelyProperties.json", 1, "synthetic-display"),
+            new PlaybackTarget(screenTarget.PropertyPath, 2, "synthetic-display"),
+            new PlaybackTarget(screenTarget.PropertyPath, 1, "synthetic-other-display") })
+        {
+            try { screenTarget.VerifySame(changed); return 13; }
+            catch (SettingsFailure) { }
+        }
         Uri document = new Uri(@"C:\Grid Wallpaper\grid-wallpaper.html");
         if (document.AbsoluteUri != "file:///C:/Grid%20Wallpaper/grid-wallpaper.html"
             || document.LocalPath != @"C:\Grid Wallpaper\grid-wallpaper.html" || document.Query.Length != 0) return 12;
