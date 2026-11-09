@@ -3,6 +3,3 @@ contact_links:
   - name: GitHub Discussions
     url: https://github.com/gagexhill/grid-wallpaper/discussions
     about: Ask setup questions and share wallpaper ideas.
-  - name: Report a security vulnerability
-    url: https://github.com/gagexhill/grid-wallpaper/security/advisories/new
-    about: Report vulnerabilities privately.
