@@ -34,7 +34,7 @@ Use the same physical Windows host, Windows/Lively/WebView2 versions, resolution
 
 ## Install, update and remove
 
-Open Install-Grid.cmd from the extracted package. It runs the same install.ps1 entry point and keeps the window open if setup exits with an error. `install.ps1 -Preview` changes nothing; `-SkipLaunch` prepares/copies files without opening Lively or changing the active wallpaper. The installer honors Lively's native library setting and verifies copied hashes. A successful CLI submission is not evidence that desktop playback rendered correctly.
+Open Install-Grid.cmd from the extracted package. It runs the same install.ps1 entry point and keeps the window open if setup exits with an error. `install.ps1 -Preview` changes nothing; `-SkipLaunch` prepares/copies files without opening Lively or changing the active wallpaper. The installer honors Lively's native library setting and verifies copied hashes. Setup reports the result and the next step. Add `-Verbose` to `install.ps1` for paths, file counts, WinGet output, and internal steps. Check the desktop to confirm playback.
 
 Run the same installer from a new extracted package to update. It retains Lively's separate saved customization and waits for a readable native library location before copying files. If startup does not finish in time, setup exits with code 2 and can be rerun. `-SkipLaunch` also returns 2 when Lively has not initialized its library yet. Complete Lively's first-run wizard when requested. If WinGet is absent, install/update Microsoft's App Installer, reopen PowerShell, and rerun. If another wallpaper already occupies the intended target, the installer stops instead of overwriting it.
 
