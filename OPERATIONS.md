@@ -23,6 +23,15 @@ Node's built-in tests cover lifecycle and settings regressions. Playwright uses 
 
 Development validation stays local; the release-only Actions authorization and preflight are under [GitHub release security](#github-release-security). GitHub-managed Dependabot updates can run despite disabled repository Actions; GitHub documents standard Dependabot jobs as excluded from included Actions minutes. The monthly version-update configuration and native security updates use that managed path. See GitHub's [Dependabot execution and billing documentation](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-on-actions).
 
+## Performance evidence
+
+Use the same physical Windows host, Windows/Lively/WebView2 versions, resolution, scaling, power mode, and settings for the baseline and candidate. Record the exact source commits and package hashes. Let the host settle and run three comparable samples per scenario. Keep detailed traces and process identifiers local.
+
+- In Edge DevTools, record Canvas frame intervals, missed frames, and main-thread work over the same sampling window with default settings and with a dense grid. Repeat while frozen and host-paused. Record the preset and frame-rate limit. Browser results isolate renderer costs.
+- In installed Lively, record CPU, GPU, working set, handles, and process count for the wallpaper player, settings helper, and its WebView2 children. Compare active playback, paused playback, visible dome readouts, and the hidden suspended panel. Sample before and after repeated open/close cycles and Lively exit/restart. Use the helper's local status to confirm the state of each run.
+- Measure cold time to readiness, warmed click-to-interactive, and time from a settings edit to the confirmed save. Use the same sequence and measurement method for each build. Report median and p95 where there are repeated observations, with the sample count. Investigate a repeatable regression before merging and require improvement beyond baseline variation before claiming a speedup.
+
+
 ## Install, update and remove
 
 The entry command is in README. `install.ps1 -Preview` changes nothing; `-SkipLaunch` prepares/copies files without opening Lively or changing the active wallpaper. The installer honors Lively's native library setting and verifies copied hashes. A successful CLI submission is not evidence that desktop playback rendered correctly.

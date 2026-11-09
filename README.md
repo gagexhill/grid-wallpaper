@@ -10,7 +10,7 @@
 ![Node](https://img.shields.io/badge/Node-22.23.2-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 ![Canvas](https://img.shields.io/badge/Canvas-2D-e8b89a?style=for-the-badge&logo=html5&logoColor=white)
 ![C#](https://img.shields.io/badge/C%23-.NET%20Framework-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)
-![Playwright](https://img.shields.io/badge/Playwright-1.63.0-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
+![Playwright](https://img.shields.io/badge/Playwright-1.64.1-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
 **Maintained by:** gagexhill  
@@ -134,7 +134,7 @@ Mouse interaction is `repel`, `attract` or `off`. The frame limit is 15, 24, 30 
 | **C# / .NET Framework** | Roslyn 5.9.0, deterministic | Desktop button, settings panel host and dome telemetry |
 | **PowerShell** | 5.1+ | `install.ps1`, packaging and the installer test suite |
 | **Windows Package Manager** | App Installer | Installs Lively when it is missing |
-| **Playwright** | 1.63.0 | Rendered browser checks |
+| **Playwright** | 1.64.1 | Rendered browser checks |
 | **gifenc** | 1.0.3 | Generates the preview GIF from real frames |
 
 ---
