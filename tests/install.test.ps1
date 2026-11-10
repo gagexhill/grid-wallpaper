@@ -11,7 +11,7 @@ $installerPath = Join-Path $repositoryDirectory 'install.ps1'
 $runtimeNames = Get-Content -LiteralPath (Join-Path $repositoryDirectory 'wallpaper-files.json') -Raw | ConvertFrom-Json
 $metadataText = Get-Content -LiteralPath (Join-Path $repositoryDirectory 'wallpaper\LivelyInfo.json') -Raw
 $metadata = $metadataText | ConvertFrom-Json
-$fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+$fixtureParent = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 $fixtureName = 'grid-wallpaper-install-test-' + [Guid]::NewGuid().ToString('N')
 $fixtureDirectory = Join-Path $fixtureParent $fixtureName
 $registryFixtureId = [Guid]::NewGuid().ToString('N')
@@ -24,6 +24,7 @@ $registryStartupSiblingName = 'UnrelatedFixtureStartup'
 $registryFixturesReserved = $false
 $configJunctionPath = Join-Path $fixtureDirectory 'linked-host-config\windows-host.json'
 $sourceJunctionPath = Join-Path $fixtureDirectory 'flat-release\wallpaper'
+$libraryJunctionPath = Join-Path $fixtureDirectory 'redirected-library-test'
 $retiredJunctionPath = Join-Path $fixtureDirectory 'linked-retired-runtime\grid-native-settings.js'
 $module = $null
 $flatModule = $null
@@ -68,7 +69,8 @@ try {
     $installerAst = [Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$parseTokens, [ref]$parseErrors)
     Assert-Check ($parseErrors.Count -eq 0) 'The installer must parse in Windows PowerShell 5.1.'
     $helperNames = @('Get-LivelyState', 'Assert-Destination', 'Get-RuntimeSource', 'Enter-InstallLock', 'Copy-Runtime',
-        'Assert-SettingsLink', 'Register-SettingsLink', 'Remove-SettingsLink', 'Assert-HostConfig', 'Write-HostConfig', 'Get-LivelyUiPath')
+        'Assert-SettingsLink', 'Get-FixedDrivePath', 'Assert-SettingsAccess', 'Assert-LocalSettingsDirectory', 'Get-SettingsHostPath',
+        'Register-SettingsLink', 'Remove-SettingsLink', 'Close-SettingsHost', 'Assert-HostConfig', 'Write-HostConfig', 'Get-LivelyUiPath')
     $helperDefinitions = foreach ($helperName in $helperNames) {
         $helperMatches = @($installerAst.FindAll({
             param($node)
@@ -168,6 +170,38 @@ try {
     Assert-Check ($state.CommandDirectory -ceq $expectedCustomDestination) 'Native setwp must use the configured project directory.'
     Assert-Check (-not (Test-Path -LiteralPath $expectedCustomDestination)) 'Reading a custom location must not create files.'
     Write-Output 'PASS custom library and native readiness'
+
+    $networkLibrary = '\\grid-wallpaper-test.invalid\synthetic-library'
+    foreach ($invalidLibrary in @($networkLibrary, '\\?\C:\grid-wallpaper-synthetic-test', 'C:relative-grid-wallpaper-test')) {
+        Write-Fixture $settingsPath (@{ WallpaperDir = $invalidLibrary } | ConvertTo-Json)
+        Assert-Fails { Get-LivelyState $lively -AllowInitializing } 'Setup must reject unsupported path forms even during initialization.' 'fixed local drive'
+    }
+    $mountedRoots = [IO.Directory]::GetLogicalDrives()
+    $unusedRoot = @(90..65 | ForEach-Object { [char]$_ + ':\' } | Where-Object { $_ -notin $mountedRoots })[0]
+    Assert-Fails { Get-FixedDrivePath ($unusedRoot + 'grid-wallpaper-synthetic-test') } 'The positive drive-type check must reject an unavailable volume.' 'fixed local drive'
+    $libraryJunctionTarget = Join-Path $fixtureDirectory 'synthetic-local-library'
+    $null = [IO.Directory]::CreateDirectory($libraryJunctionTarget)
+    $null = New-Item -ItemType Junction -Path $libraryJunctionPath -Target $libraryJunctionTarget
+    Write-Fixture $settingsPath (@{ WallpaperDir = (Join-Path $libraryJunctionPath 'nested') } | ConvertTo-Json)
+    Assert-Fails { Get-LivelyState $lively } 'Setup must reject a junction ancestor even when the final directory does not exist.' 'regular local directories'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $libraryJunctionTarget 'nested'))) 'Rejected setup must leave the junction target untouched.'
+    $sharedLibrary = Join-Path $fixtureDirectory 'synthetic-shared-library-test'
+    $null = [IO.Directory]::CreateDirectory($sharedLibrary)
+    $fixtureUserGroup = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+    $fixtureWriteGrant = [Security.AccessControl.FileSystemAccessRule]::new($fixtureUserGroup, 'Write', 'Allow')
+    $fixtureAcl = [IO.Directory]::GetAccessControl($sharedLibrary)
+    $fixtureAcl.AddAccessRule($fixtureWriteGrant)
+    [IO.Directory]::SetAccessControl($sharedLibrary, $fixtureAcl)
+    Write-Fixture $settingsPath (@{ WallpaperDir = $sharedLibrary } | ConvertTo-Json)
+    Assert-Fails { Get-LivelyState $lively } 'Setup must reject a locally shared writable library.' 'cannot be modified by other accounts'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $sharedLibrary 'wallpapers'))) 'A rejected library must stay untouched.'
+    $syntheticAcl = [Security.AccessControl.DirectorySecurity]::new()
+    $fixtureOwner = [IO.Directory]::GetAccessControl($fixtureDirectory).GetOwner([Security.Principal.SecurityIdentifier])
+    $syntheticAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($fixtureOwner, 'FullControl', 'Allow'))
+    $syntheticAcl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-1-0'))
+    Assert-Fails { Assert-SettingsAccess 'synthetic owner test' $syntheticAcl 1 } 'Untrusted ownership must fail closed.' 'owned and protected'
+    Write-Fixture $settingsPath (@{ WallpaperDir = $customLibrary; IsFirstRun = $true } | ConvertTo-Json)
+    Write-Output 'PASS local library trust checks'
 
     $store = [pscustomobject]@{ DataDirectory = $storeDataDirectory; Store = $true }
     $storeSettingsPath = Join-Path $storeDataDirectory 'Settings.json'
@@ -411,6 +445,19 @@ try {
     Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'Checking an available settings scheme must not register it.'
     Assert-Check (-not (Test-Path -LiteralPath $registryStartupKey)) 'Checking an available settings scheme must not create a startup key.'
     Assert-Fails { Register-SettingsLink $blockedHostDirectory } 'A missing host must fail before registration.' 'settings host is missing'
+    Assert-Fails { Register-SettingsLink $networkLibrary } 'A network destination must fail before registration.' 'fixed local drive'
+    Assert-Fails { Register-SettingsLink $libraryJunctionPath } 'A redirected destination must fail before registration.' 'regular local directories'
+    $invalidHostDirectory = Join-Path $fixtureDirectory 'synthetic-directory-in-place-of-host'
+    $null = [IO.Directory]::CreateDirectory((Join-Path $invalidHostDirectory 'grid-settings.exe'))
+    Assert-Fails { Register-SettingsLink $invalidHostDirectory } 'A directory in place of the host must fail before registration.' 'regular local files'
+    $sharedHostDirectory = Join-Path $fixtureDirectory 'synthetic-shared-host-test'
+    Write-Fixture (Join-Path $sharedHostDirectory 'grid-settings.exe') 'synthetic path fixture'
+    $sharedDll = Join-Path $sharedHostDirectory 'WebView2Loader.dll'
+    Write-Fixture $sharedDll 'synthetic DLL fixture'
+    $fixtureAcl = [IO.File]::GetAccessControl($sharedDll)
+    $fixtureAcl.AddAccessRule($fixtureWriteGrant)
+    [IO.File]::SetAccessControl($sharedDll, $fixtureAcl)
+    Assert-Fails { Register-SettingsLink $sharedHostDirectory } 'A locally shared runtime DLL must fail before registration.' 'cannot be modified by other accounts'
     Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'A missing host must leave the registry unchanged.'
     Assert-Check (-not (Test-Path -LiteralPath $registryStartupKey)) 'A missing host must not create a startup entry.'
     $null = New-Item -Path $registryStartupKey
@@ -451,6 +498,15 @@ try {
     Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Removal must preserve unrelated startup entries.'
     Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Removal must preserve unrelated sibling registrations.'
     Remove-SettingsLink
+    Register-SettingsLink $expectedCustomDestination
+    $oldHost = [IO.Path]::Combine($networkLibrary, 'grid-settings.exe')
+    $null = Set-ItemProperty -LiteralPath $commandKey -Name '(default)' -Value ('"' + $oldHost + '" --uri "%1"')
+    $null = Set-ItemProperty -LiteralPath $registryStartupKey -Name $registryStartupName -Value ('"' + $oldHost + '" --warm')
+    $cleanupWarnings = @(Remove-SettingsLink $expectedCustomDestination 3>&1)
+    Assert-Check ($cleanupWarnings.Count -eq 1 -and $cleanupWarnings[0].Message.Contains('without opening it')) 'Legacy cleanup must skip execution when its target differs from the verified destination.'
+    Assert-Check (-not (Test-Path -LiteralPath $registryFixtureKey)) 'Legacy cleanup must still remove the owned settings link.'
+    Assert-Check ($null -eq (Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupName, $null)) 'Legacy cleanup must still remove the owned startup value.'
+    Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Legacy cleanup must preserve unrelated values.'
     Assert-Check ((Get-Item -LiteralPath $registrySiblingKey).GetValue('UnrelatedSentinel') -ceq 'preserve sibling') 'Repeated removal must leave unrelated registrations unchanged.'
     Assert-Check ((Get-Item -LiteralPath $registryStartupKey).GetValue($registryStartupSiblingName) -ceq 'preserve unrelated startup') 'Repeated removal must leave unrelated startup entries unchanged.'
 
@@ -540,6 +596,7 @@ try {
     foreach ($junctionFixture in @(
         @{ Path = $configJunctionPath; Relative = 'linked-host-config\windows-host.json' },
         @{ Path = $sourceJunctionPath; Relative = 'flat-release\wallpaper' },
+        @{ Path = $libraryJunctionPath; Relative = 'redirected-library-test' },
         @{ Path = $retiredJunctionPath; Relative = 'linked-retired-runtime\grid-native-settings.js' }
     )) {
         if (-not (Test-Path -LiteralPath $junctionFixture.Path)) { continue }
