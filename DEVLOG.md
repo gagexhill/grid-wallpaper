@@ -1,5 +1,10 @@
 # Decisions
 
+## 2026-11-10 — Unsigned public distribution
+
+- The Owner chose the existing open-source ZIP distribution without app signing. The installer and build have no certificate or signing-provider dependency; release checks continue to cover the source commit, package digest, native protections, dependency integrity and installed behavior.
+- Retired #19's provider and signed-release plan. This does not change the historical unsigned release assets or the vendor libraries' own signatures. A fresh downloadable package still follows the immutable release procedure in `OPERATIONS.md`.
+
 ## 2026-11-10 — Installer storage requirements
 
 - Setup validates a fixed local volume, regular directory ancestry, Windows ownership and modification permissions before installing or registering the settings helper. The same checks protect existing runtime files before helper activation.
@@ -55,7 +60,7 @@
 - Added a `pre-push` hook that runs Gitleaks over only the commits being pushed, with a logged `GITLEAKS_BYPASS` escape. It landed in PR #27 without a decision record, a documentation entry or a tracking issue; this entry and the `OPERATIONS.md` procedure close that gap. The hook is not installed by cloning, so each clone needs `git config core.hooksPath .githooks`; that step is now written down rather than assumed.
 - Recorded release digests were never reproducible. Line endings were unpinned, so a clone's `core.autocrlf` setting changed packaged bytes with no source change; the installed preview-6 runtime already differed from the committed source by one line ending in each consolidated module. `.gitattributes` now checks the runtime, metadata and documentation out as LF, keeps Windows PowerShell setup and validation at CRLF, and never transforms the reviewed thumbnail and preview assets. No file content changed and no stored blob moved.
 - `Compress-Archive` stored real last-write times, so every build produced a different archive. Packaging now writes entries itself in a fixed ordinal order with the ZIP format's earliest representable timestamp and rejects duplicate entry names. Two consecutive builds of one source tree now differ only in `grid-settings.exe`; the other 19 of 20 entries are byte-identical with identical stored timestamps.
-- The legacy Windows .NET Framework compiler rejects `/deterministic`, so the compiled helper still varies per build. A recorded helper or ZIP digest therefore identifies one build rather than proving a reproducible one, and `OPERATIONS.md` now says so. A pinned Roslyn toolchain would close it and is an Owner dependency decision in #28; binary post-processing was rejected as fragile ahead of signing.
+- The legacy Windows .NET Framework compiler rejects `/deterministic`, so the compiled helper still varies per build. A recorded helper or ZIP digest therefore identifies one build rather than proving a reproducible one, and `OPERATIONS.md` now says so. A pinned Roslyn toolchain would close it and is an Owner dependency decision in #28; binary post-processing was rejected as fragile.
 - Validated at each step with exit 0: 17 runtime tests, 291 installer assertions, 19 browser tests, a twice-built archive comparison, and a read-only setup preview from the extracted 20-file package.
 
 ## 2026-09-14 — Consolidate runtime ownership
@@ -107,11 +112,11 @@
 ## 2026-09-14 — Preview installation and release finishing
 
 - Put the supported desktop configuration and preview download before setup, explained ZIP extraction and opening PowerShell, and added expected success, update, ordered removal and public/private help paths. README owns the short user procedure; OPERATIONS.md explains native behavior.
-- Replaced the stale README acceptance list with links to the current laptop evidence and open work. Licensing, trusted distribution and clean-Windows installation now have separate native issues (#18, #19 and #20); the Owner's deferred laptop checks remain in #1.
+- Replaced the stale README acceptance list with links to the current laptop evidence and open work. Licensing, publisher identity and clean-Windows installation had separate native issues (#18, #19 and #20); the Owner's deferred laptop checks remained in #1. The later unsigned-distribution decision above retires #19.
 - The Owner confirmed personal copyright ownership credited as `gagexhill` and selected MIT licensing. Added the project license and package metadata, and included it in the flat distribution alongside the separate WebView2 redistribution notice. This requires a new preview artifact; earlier immutable packages retain their original contents.
 - Corrected Lively's author/license fields and preserved upgrades from the former credit with a narrow identity check. A setup preview exposed the prior author-equality collision; installer regression coverage now proves migration, collision rejection and saved-customization preservation. Legacy installers cannot downgrade a corrected-credit installation, so the rollback runbook starts with the MIT-licensed previews.
-- Signing preparation exposed empty native product metadata and a `0.0.0.0` version. The native build now derives and verifies those fields from the existing package and Lively metadata owners; prerelease identity is preserved in ProductVersion, while file/assembly versions follow the numeric .NET format. Generated assembly source remains build-only and is excluded from distribution.
-- The Owner authorized GitHub Actions for final production/release work in this repository while keeping development validation local. Updated the release procedure to preserve that scope and the existing Copilot-review confirmation. Provider selection remains in #19; no hosted workflow or signing account was enabled.
+- Native build preparation exposed empty product metadata and a `0.0.0.0` version. The build now derives and verifies those fields from the existing package and Lively metadata owners; prerelease identity is preserved in ProductVersion, while file/assembly versions follow the numeric .NET format. Generated assembly source remains build-only and is excluded from distribution.
+- The Owner authorized GitHub Actions for final production/release work in this repository while keeping development validation local. Updated the release procedure to preserve that scope and the existing Copilot-review confirmation. No hosted workflow was enabled.
 
 ## 2026-09-14 — Development selection and discovery procedure
 

@@ -266,6 +266,8 @@ function frame(now) {
 2. In File Explorer, right-click the ZIP and choose **Extract All**.
 3. Open **Install-Grid.cmd** if it is included in the extracted folder. For the published Preview 6 ZIP, run the PowerShell command below.
 
+> The project distributes an unsigned ZIP. Windows may warn when opening it. Keep Windows protections enabled, use the download from this repository, and compare the ZIP's SHA256 with the accompanying `.sha256` release asset.
+
 Run this from PowerShell in the extracted folder:
 
 ```powershell
