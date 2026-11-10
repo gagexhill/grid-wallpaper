@@ -148,6 +148,7 @@ internal sealed class DesktopLauncher : Form
     private bool snappedRight = true;
     private bool initialized;
     private double normalizedY;
+    private string preferredDisplay;
     private readonly string positionFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Grid Wallpaper", "launcher-position.json");
 
     internal DesktopLauncher(LauncherVisuals images, double displayScale, IntPtr status, Action<Point, long> onClick,
@@ -242,7 +243,8 @@ internal sealed class DesktopLauncher : Form
         int dx = cursor.X - downScreen.X, dy = cursor.Y - downScreen.Y;
         if (!dragging && Math.Sqrt((double)dx * dx + (double)dy * dy) >= 6 * scale) dragging = true;
         if (!dragging) return;
-        MoveLauncher(Clamp(new Point(downWindow.X + dx, downWindow.Y + dy)));
+        MoveLauncher(SettingsGeometry.Clamp(Screen.FromPoint(cursor).WorkingArea,
+            Size, new Point(downWindow.X + dx, downWindow.Y + dy), visuals.Gap));
         SettingsProgram.SetMetric(statusWindow, "Dragging", 1);
         PaintFrame();
     }
@@ -298,18 +300,15 @@ internal sealed class DesktopLauncher : Form
         releasing = true; pressed = false; dragging = false; Capture = false; releasing = false;
         SettingsProgram.SetMetric(statusWindow, "Dragging", 0); AnimateTo(0);
     }
-    private Point Clamp(Point value)
-    {
-        Rectangle area = Screen.PrimaryScreen.WorkingArea;
-        return new Point(Math.Max(area.Left + visuals.Gap, Math.Min(value.X, area.Right - Width - visuals.Gap)),
-            Math.Max(area.Top + visuals.Gap, Math.Min(value.Y, area.Bottom - Height - visuals.Gap)));
-    }
     private void Snap(bool animate = true)
     {
         CancelSnap();
-        Rectangle area = Screen.PrimaryScreen.WorkingArea;
+        Screen screen = Screen.FromPoint(ButtonAnchor());
+        Rectangle area = screen.WorkingArea;
+        preferredDisplay = WallpaperDisplay.DeviceId(screen);
         snappedRight = Left + Width / 2 >= area.Left + area.Width / 2;
-        snapTarget = Clamp(new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap, Top));
+        snapTarget = SettingsGeometry.Clamp(area, Size,
+            new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap, Top), visuals.Gap);
         normalizedY = Math.Max(0, Math.Min(1, (snapTarget.Y - area.Top - visuals.Gap) / (double)Math.Max(1, area.Height - Height - 2 * visuals.Gap)));
         if (!animate || !ClientAnimationsEnabled() || Location == snapTarget)
         {
@@ -341,9 +340,19 @@ internal sealed class DesktopLauncher : Form
     }
     private void PlaceFromPreference()
     {
-        Rectangle area = Screen.PrimaryScreen.WorkingArea;
-        MoveLauncher(Clamp(new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap,
-            area.Top + visuals.Gap + (int)Math.Round(normalizedY * Math.Max(0, area.Height - Height - 2 * visuals.Gap)))));
+        Screen screen = Screen.PrimaryScreen;
+        if (!String.IsNullOrEmpty(preferredDisplay))
+            foreach (Screen candidate in Screen.AllScreens)
+            {
+                if (!String.Equals(WallpaperDisplay.DeviceId(candidate), preferredDisplay, StringComparison.OrdinalIgnoreCase)) continue;
+                screen = candidate;
+                break;
+            }
+        Rectangle area = screen.WorkingArea;
+        MoveLauncher(SettingsGeometry.Clamp(area, Size,
+            new Point(snappedRight ? area.Right - Width - visuals.Gap : area.Left + visuals.Gap,
+                area.Top + visuals.Gap + (int)Math.Round(normalizedY * Math.Max(0, area.Height - Height - 2 * visuals.Gap))),
+            visuals.Gap));
     }
     private void MoveLauncher(Point position)
     {
@@ -352,7 +361,7 @@ internal sealed class DesktopLauncher : Form
     }
     private Point ButtonAnchor()
     {
-        return SettingsGeometry.AnchorAtCenter(Screen.PrimaryScreen.Bounds, Bounds);
+        return new Point(Left + Width / 2, Top + Height / 2);
     }
     private void AnimateTo(int value)
     {
@@ -415,6 +424,7 @@ internal sealed class DesktopLauncher : Form
     }
     private void ReadPosition()
     {
+        if (!File.Exists(positionFile)) return;
         try
         {
             Dictionary<string, object> saved = SettingsData.ObjectValue(SettingsData.ReadJson(positionFile));
@@ -423,9 +433,11 @@ internal sealed class DesktopLauncher : Form
                 || !SettingsData.NumberValue(value, out y) || y < 0 || y > 1) return;
             snappedRight = (bool)right;
             normalizedY = y;
+            object display;
+            if (saved.TryGetValue("display", out display)) preferredDisplay = display as string;
             PlaceFromPreference();
         }
-        catch (Exception) { }
+        catch (Exception error) { Console.Error.WriteLine("Could not read the saved launcher position: " + error.GetType().Name); }
     }
     private void SavePosition()
     {
@@ -434,17 +446,19 @@ internal sealed class DesktopLauncher : Form
             Directory.CreateDirectory(Path.GetDirectoryName(positionFile));
             string temporary = positionFile + ".tmp";
             foreach (string file in new string[] { positionFile, temporary })
-                if (File.Exists(file) && (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) return;
+                if (File.Exists(file) && (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("The launcher preference path is redirected.");
             File.WriteAllText(temporary, new JavaScriptSerializer().Serialize(new
             {
                 right = snappedRight,
-                y = normalizedY
+                y = normalizedY,
+                display = preferredDisplay
             }));
             if (File.Exists(positionFile)) File.Replace(temporary, positionFile, null);
             else File.Move(temporary, positionFile);
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException error) { Console.Error.WriteLine("Could not save the launcher position: " + error.GetType().Name); }
+        catch (UnauthorizedAccessException error) { Console.Error.WriteLine("Could not save the launcher position: " + error.GetType().Name); }
     }
 }
 
@@ -471,21 +485,24 @@ internal static class SettingsGeometry
         return true;
     }
 
-    internal static Point Position(Rectangle screen, Rectangle workArea, Size panel, Point anchor, int gap)
+    internal static Point ScreenPoint(Rectangle screen, Point anchor)
     {
         if (anchor.X < 0 || anchor.X > CoordinateScale || anchor.Y < 0 || anchor.Y > CoordinateScale)
             throw new SettingsFailure("The settings panel position is invalid.");
-        int x = screen.Left + (int)Math.Round(screen.Width * (double)anchor.X / CoordinateScale) - panel.Width;
+        int x = screen.Left + (int)Math.Round(screen.Width * (double)anchor.X / CoordinateScale);
         int y = screen.Top + (int)Math.Round(screen.Height * (double)anchor.Y / CoordinateScale);
-        return new Point(Math.Max(workArea.Left + gap, Math.Min(x, workArea.Right - panel.Width - gap)),
-            Math.Max(workArea.Top + gap, Math.Min(y, workArea.Bottom - panel.Height - gap)));
+        return new Point(Math.Min(x, screen.Right - 1), Math.Min(y, screen.Bottom - 1));
     }
 
-    internal static Point AnchorAtCenter(Rectangle screen, Rectangle launcher)
+    internal static Point Position(Rectangle workArea, Size panel, Point anchor, int gap)
     {
-        if (screen.Width <= 0 || screen.Height <= 0) throw new SettingsFailure("The primary display geometry is invalid.");
-        return new Point(Math.Max(0, Math.Min(CoordinateScale, (int)Math.Round((launcher.Left + launcher.Width / 2d - screen.Left) / screen.Width * CoordinateScale))),
-            Math.Max(0, Math.Min(CoordinateScale, (int)Math.Round((launcher.Top + launcher.Height / 2d - screen.Top) / screen.Height * CoordinateScale))));
+        return Clamp(workArea, panel, new Point(anchor.X - panel.Width, anchor.Y), gap);
+    }
+
+    internal static Point Clamp(Rectangle workArea, Size size, Point position, int gap)
+    {
+        return new Point(Math.Max(workArea.Left + gap, Math.Min(position.X, workArea.Right - size.Width - gap)),
+            Math.Max(workArea.Top + gap, Math.Min(position.Y, workArea.Bottom - size.Height - gap)));
     }
 
     internal static Point SnapPosition(Point start, Point target, double elapsedMilliseconds)
@@ -510,15 +527,18 @@ internal static class SettingsGeometry
         Rectangle screen = new Rectangle(0, 0, 1920, 1200);
         Rectangle area = new Rectangle(0, 0, 1920, 1140);
         Size panel = new Size(450, 875);
-        if (Position(screen, area, panel, new Point(950000, 100000), 20) != new Point(1374, 120)) return 24;
-        if (Position(screen, area, panel, new Point(0, 0), 20) != new Point(20, 20)) return 25;
-        if (Position(screen, area, panel, new Point(CoordinateScale, CoordinateScale), 20) != new Point(1450, 245)) return 26;
-        try { Position(screen, area, panel, new Point(-1, 0), 20); return 27; } catch (SettingsFailure) { }
-        if (Position(screen, area, panel, AnchorAtCenter(screen, new Rectangle(1840, 20, 60, 60)), 20) != new Point(1420, 50)) return 28;
-        if (Position(screen, area, panel, AnchorAtCenter(screen, new Rectangle(1000, 120, 60, 60)), 20) != new Point(580, 150)) return 29;
-        if (Position(screen, area, panel, AnchorAtCenter(screen, new Rectangle(20, 800, 60, 60)), 20) != new Point(20, 245)) return 34;
+        if (Position(area, panel, ScreenPoint(screen, new Point(950000, 100000)), 20) != new Point(1374, 120)) return 24;
+        if (Position(area, panel, ScreenPoint(screen, Point.Empty), 20) != new Point(20, 20)) return 25;
+        if (Position(area, panel, ScreenPoint(screen, new Point(CoordinateScale, CoordinateScale)), 20) != new Point(1450, 245)) return 26;
+        try { ScreenPoint(screen, new Point(-1, 0)); return 27; } catch (SettingsFailure) { }
+        if (Position(area, panel, new Point(1870, 50), 20) != new Point(1420, 50)) return 28;
+        if (Position(area, panel, new Point(1030, 150), 20) != new Point(580, 150)) return 29;
+        if (Position(area, panel, new Point(50, 830), 20) != new Point(20, 245)) return 34;
         Rectangle smallerArea = new Rectangle(0, 0, 1600, 600);
-        if (Position(screen, smallerArea, new Size(450, 560), AnchorAtCenter(screen, new Rectangle(1520, 500, 60, 60)), 20) != new Point(1100, 20)) return 35;
+        if (Position(smallerArea, new Size(450, 560), new Point(1550, 530), 20) != new Point(1100, 20)) return 35;
+        Rectangle leftArea = new Rectangle(-1920, -101, 1920, 1032);
+        if (Clamp(leftArea, new Size(60, 60), new Point(-2, -200), 20) != new Point(-80, -81)) return 42;
+        if (Position(leftArea, panel, new Point(-730, 10), 20) != new Point(-1180, 10)) return 43;
         Point snapStart = new Point(820, 200), snapTarget = new Point(20, 200);
         if (SnapPosition(snapStart, snapTarget, -1) != snapStart || SnapPosition(snapStart, snapTarget, 0) != snapStart) return 36;
         if (SnapPosition(snapStart, snapTarget, 45) != new Point(120, 200)) return 37;

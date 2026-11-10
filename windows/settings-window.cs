@@ -143,13 +143,14 @@ internal static class SettingsProgram
         WindowRectangle bounds = new WindowRectangle(), launcherBounds = new WindowRectangle();
         if (panel != IntPtr.Zero) GetWindowRect(panel, out bounds);
         if (launcher != IntPtr.Zero) GetWindowRect(launcher, out launcherBounds);
-        Rectangle primaryBounds = Screen.PrimaryScreen.Bounds;
-        Rectangle primaryWorkArea = Screen.PrimaryScreen.WorkingArea;
+        bool panelVisible = panel != IntPtr.Zero && IsWindowVisible(panel);
+        Screen screen = panelVisible ? Screen.FromHandle(panel) : launcher != IntPtr.Zero ? Screen.FromHandle(launcher) : Screen.PrimaryScreen;
+        Rectangle screenBounds = screen.Bounds, workArea = screen.WorkingArea;
         Console.WriteLine(new JavaScriptSerializer().Serialize(new
         {
             running = running,
             ready = window != IntPtr.Zero && GetProp(window, WindowMarker + "Ready") == new IntPtr(1),
-            visible = panel != IntPtr.Zero && IsWindowVisible(panel),
+            visible = panelVisible,
             suspended = window != IntPtr.Zero && GetProp(window, WindowMarker + "Suspended") == new IntPtr(1),
             playbackDetected = Metric(window, "PlaybackDetected") == new IntPtr(1),
             startupRecovery = new string[] { "observing", "waiting", "skipped", "submitted", "failed" }[Math.Max(0, Math.Min(4, (int)Metric(window, "StartupRecovery").ToInt64()))],
@@ -179,8 +180,8 @@ internal static class SettingsProgram
             },
             screen = new
             {
-                left = primaryBounds.Left, top = primaryBounds.Top, width = primaryBounds.Width, height = primaryBounds.Height,
-                workArea = new { left = primaryWorkArea.Left, top = primaryWorkArea.Top, width = primaryWorkArea.Width, height = primaryWorkArea.Height }
+                left = screenBounds.Left, top = screenBounds.Top, width = screenBounds.Width, height = screenBounds.Height,
+                workArea = new { left = workArea.Left, top = workArea.Top, width = workArea.Width, height = workArea.Height }
             }
         }));
         return 0;
@@ -298,7 +299,7 @@ internal sealed class SettingsApplicationContext : ApplicationContext
         supervisor.OpenRequested += delegate(Point value)
         {
             anchor = value;
-            if (panel != null) panel.TogglePanel(value, Stopwatch.GetTimestamp());
+            if (panel != null) panel.TogglePanel(SettingsGeometry.ScreenPoint(Screen.PrimaryScreen.Bounds, value), Stopwatch.GetTimestamp());
             else { openRequested = true; CheckForWallpaper(); }
         };
         supervisor.ExitRequested += Stop;
@@ -852,7 +853,7 @@ internal sealed class SettingsWindow : Form
     {
         installDirectory = installedDirectory;
         openRequested = !warm;
-        anchor = requestedAnchor;
+        anchor = SettingsGeometry.ScreenPoint(Screen.PrimaryScreen.Bounds, requestedAnchor);
         shutdown = shutdownEvent;
         statusWindow = statusHandle;
         data = loaded;
@@ -864,10 +865,7 @@ internal sealed class SettingsWindow : Form
         AutoScaleMode = AutoScaleMode.None;
         BackColor = Color.FromArgb(16, 16, 14);
         using (Graphics graphics = Graphics.FromHwnd(IntPtr.Zero)) displayScale = graphics.DpiX / 96.0;
-        Rectangle area = Screen.PrimaryScreen.WorkingArea;
         displayGap = (int)Math.Round(16 * displayScale);
-        ClientSize = new Size(Math.Min((int)Math.Round(360 * displayScale), area.Width - displayGap * 2),
-            Math.Min((int)Math.Round(700 * displayScale), area.Height - displayGap * 2));
         PositionPanel();
         browser.Dock = DockStyle.Fill;
         browser.DefaultBackgroundColor = BackColor;
@@ -938,11 +936,11 @@ internal sealed class SettingsWindow : Form
 
     private void PositionPanel()
     {
-        Screen screen = Screen.PrimaryScreen;
-        Size fitted = new Size(Math.Max(1, Math.Min((int)Math.Round(360 * displayScale), screen.WorkingArea.Width - displayGap * 2)),
-            Math.Max(1, Math.Min((int)Math.Round(700 * displayScale), screen.WorkingArea.Height - displayGap * 2)));
+        Rectangle area = Screen.FromPoint(anchor).WorkingArea;
+        Size fitted = new Size(Math.Max(1, Math.Min((int)Math.Round(360 * displayScale), area.Width - displayGap * 2)),
+            Math.Max(1, Math.Min((int)Math.Round(700 * displayScale), area.Height - displayGap * 2)));
         if (ClientSize != fitted) { ClientSize = fitted; if (ready) UpdateRegion(); }
-        Point position = SettingsGeometry.Position(screen.Bounds, screen.WorkingArea, Size, anchor, displayGap);
+        Point position = SettingsGeometry.Position(area, Size, anchor, displayGap);
         if (IsHandleCreated) SettingsInteraction.MoveWithoutActivation(Handle, position);
         else Location = position;
     }
