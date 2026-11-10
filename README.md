@@ -50,7 +50,7 @@
 
 This repository owns the whole product — the Canvas runtime that draws it, the native C# host that puts controls on the desktop, the generator that keeps one configuration in sync across three consumers, the PowerShell installer, and the browser, runtime and installer test suites. It is not a Lively theme pack; Lively is the player it runs inside.
 
-It runs entirely offline. The internet is used to download a release and to fetch prerequisites, and never again.
+Normal wallpaper use works offline after the release and prerequisites are downloaded. The settings helper uses a temporary connection on this machine for live dome readouts; it does not send those readouts to an internet service.
 
 ---
 
@@ -188,7 +188,7 @@ Control flows one way: **Lively owns the saved values**, the native host propose
 
 - **Reduced-motion aware** — Decorative animations respect the operating system's reduced-motion preference.
 
-- **Fully offline, no account, no service** — No server, no telemetry off the machine, no background updater and no scheduled task. Each release ships a SHA256 checksum, and `install.ps1 -Preview` shows what setup would do without changing anything.
+- **Offline use, no account** — No cloud service, telemetry off the machine, background updater or scheduled task. The helper uses an authenticated loopback connection for live dome readouts and requests samples only while those readouts are visible. Each release ships a SHA256 checksum, and `install.ps1 -Preview` shows what setup would do without changing anything.
 
 ---
 
@@ -268,6 +268,8 @@ function frame(now) {
 
 > The helper and installer in the ZIP are unsigned. Windows may warn when opening them. Keep Windows protections enabled, use the download from this repository, and compare the ZIP's SHA256 with the accompanying `.sha256` release asset.
 
+> Preview 8 was installed on an existing Windows and Lively setup. A first installation on clean Windows, including missing prerequisites and download trust prompts, has not been verified. The two-display checks are recorded in [#52](https://github.com/gagexhill/grid-wallpaper/issues/52); [#57](https://github.com/gagexhill/grid-wallpaper/issues/57) tracks clean Windows and three-display acceptance.
+
 Run this from PowerShell in the extracted folder:
 
 ```powershell
@@ -294,7 +296,7 @@ npm run package
 
 Packaging compiles the native host with Microsoft's Roslyn toolset (5.9.0) against a pinned official WebView2 SDK (1.0.4191.47). The build resolves both exact versions through NuGet and checks the pinned SHA512 before use. The release includes the required WebView2 libraries and their license. Compilation is deterministic, so an unchanged tree rebuilds to the same helper and the same archive byte for byte. The installable ZIP and its checksum are written to `dist/`. Open `wallpaper/grid-wallpaper.html` for a browser preview.
 
-**Where to go next:** [OPERATIONS.md](OPERATIONS.md) owns validation, packaging, release, removal and recovery procedures · [AGENTS.md](AGENTS.md) owns source-editing rules · [CLAUDE.md](CLAUDE.md) is the thin agent entrypoint · [DEVLOG.md](DEVLOG.md) records completed decisions · [open issues](https://github.com/gagexhill/grid-wallpaper/issues) track current work. [Display hotplug acceptance](https://github.com/gagexhill/grid-wallpaper/issues/30) covers two displays. Three displays remain unverified.
+**Where to go next:** [OPERATIONS.md](OPERATIONS.md) owns validation, packaging, release, removal and recovery procedures · [AGENTS.md](AGENTS.md) owns source-editing rules · [CLAUDE.md](CLAUDE.md) is the thin agent entrypoint · [DEVLOG.md](DEVLOG.md) records completed decisions · [#57](https://github.com/gagexhill/grid-wallpaper/issues/57) tracks remaining installed acceptance. [Display #30](https://github.com/gagexhill/grid-wallpaper/issues/30) and [installation #20](https://github.com/gagexhill/grid-wallpaper/issues/20) record their accepted scopes.
 
 ---
 
