@@ -284,7 +284,7 @@ For a continuous wallpaper across monitors, open Lively's library, click the mon
 
 ### Build for Production
 
-Use the Node.js version in [.node-version](.node-version) and Microsoft Edge on Windows. With fnm configured, `fnm use --install-if-missing` selects it.
+These commands require a source checkout; the install ZIP contains only the built runtime and setup files. Use the Node.js version in the source [`.node-version`](https://github.com/gagexhill/grid-wallpaper/blob/main/.node-version) and Microsoft Edge on Windows. With fnm configured, `fnm use --install-if-missing` selects it.
 
 ```powershell
 npm ci
@@ -296,7 +296,7 @@ npm run package
 
 Packaging compiles the native host with Microsoft's Roslyn toolset (5.9.0) against a pinned official WebView2 SDK (1.0.4191.47). The build resolves both exact versions through NuGet and checks the pinned SHA512 before use. The release includes the required WebView2 libraries and their license. Compilation is deterministic, so an unchanged tree rebuilds to the same helper and the same archive byte for byte. The installable ZIP and its checksum are written to `dist/`. Open `wallpaper/grid-wallpaper.html` for a browser preview.
 
-**Where to go next:** [OPERATIONS.md](OPERATIONS.md) owns validation, packaging, release, removal and recovery procedures · [AGENTS.md](AGENTS.md) owns source-editing rules · [CLAUDE.md](CLAUDE.md) is the thin agent entrypoint · [DEVLOG.md](DEVLOG.md) records completed decisions · [#57](https://github.com/gagexhill/grid-wallpaper/issues/57) tracks remaining installed acceptance. [Display #30](https://github.com/gagexhill/grid-wallpaper/issues/30) and [installation #20](https://github.com/gagexhill/grid-wallpaper/issues/20) record their accepted scopes.
+**Where to go next:** [OPERATIONS.md](OPERATIONS.md) owns validation, packaging, release, removal and recovery procedures · source [AGENTS.md](https://github.com/gagexhill/grid-wallpaper/blob/main/AGENTS.md) owns editing rules · source [CLAUDE.md](https://github.com/gagexhill/grid-wallpaper/blob/main/CLAUDE.md) is the thin agent entrypoint · source [DEVLOG.md](https://github.com/gagexhill/grid-wallpaper/blob/main/DEVLOG.md) records completed decisions · [#57](https://github.com/gagexhill/grid-wallpaper/issues/57) tracks remaining installed acceptance. [Display #30](https://github.com/gagexhill/grid-wallpaper/issues/30) and [installation #20](https://github.com/gagexhill/grid-wallpaper/issues/20) record their accepted scopes.
 
 ---
 
@@ -350,7 +350,7 @@ The installed package is flat. The folders above exist only in a source checkout
 
 [![GitHub](https://img.shields.io/badge/GitHub-gagexhill-181717?style=for-the-badge&logo=github)](https://github.com/gagexhill)
 
-Use [Discussions](https://github.com/gagexhill/grid-wallpaper/discussions) for setup questions and [Issues](https://github.com/gagexhill/grid-wallpaper/issues/new/choose) for bugs and requests. Read the [contributor guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before contributing. Report vulnerabilities through the [security policy](SECURITY.md).
+Use [Discussions](https://github.com/gagexhill/grid-wallpaper/discussions) for setup questions and [Issues](https://github.com/gagexhill/grid-wallpaper/issues/new/choose) for bugs and requests. Read the [contributor guide](https://github.com/gagexhill/grid-wallpaper/blob/main/CONTRIBUTING.md) and [Code of Conduct](https://github.com/gagexhill/grid-wallpaper/blob/main/CODE_OF_CONDUCT.md) before contributing. Report vulnerabilities through the [security policy](https://github.com/gagexhill/grid-wallpaper/blob/main/SECURITY.md).
 
 </div>
 
@@ -360,6 +360,6 @@ Use [Discussions](https://github.com/gagexhill/grid-wallpaper/discussions) for s
 
 **Grid Wallpaper** — *the desktop, finally worth looking at.*
 
-[MIT licensed](LICENSE.txt) · © 2026 gagexhill · The packaged WebView2 SDK libraries retain their separate redistribution notice.
+[Software: MIT](LICENSE.txt) · [Code of Conduct: CC BY 4.0](https://github.com/gagexhill/grid-wallpaper/blob/main/CODE_OF_CONDUCT.md) · © 2026 gagexhill · The packaged WebView2 SDK libraries retain their separate redistribution notice.
 
 </div>
