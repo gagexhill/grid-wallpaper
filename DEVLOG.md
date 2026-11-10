@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-11-10 — Preview 8 source identity
+
+- Advanced the package and README to Preview 8 so the cross-display launcher, installer storage checks and unsigned-distribution decision can ship together under a new immutable version. Preview 7 remains the prior published package; the version change alone does not establish a new downloadable release or installed acceptance.
+
 ## 2026-11-10 — Unsigned public distribution
 
 - The Owner chose the existing open-source ZIP distribution without app signing. The installer and build have no certificate or signing-provider dependency; release checks continue to cover the source commit, package digest, native protections, dependency integrity and installed behavior.
