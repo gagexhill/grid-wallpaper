@@ -6,11 +6,11 @@
 
 <div align="center">
 
-![Grid Wallpaper](https://img.shields.io/badge/Grid%20Wallpaper-1.0.0--preview.6-9ecdb8?style=for-the-badge&logo=windowsterminal&logoColor=white)
+![Grid Wallpaper](https://img.shields.io/badge/Grid%20Wallpaper-1.0.0--preview.7-9ecdb8?style=for-the-badge&logo=windowsterminal&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-22.23.2-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 ![Canvas](https://img.shields.io/badge/Canvas-2D-e8b89a?style=for-the-badge&logo=html5&logoColor=white)
 ![C#](https://img.shields.io/badge/C%23-.NET%20Framework-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)
-![Playwright](https://img.shields.io/badge/Playwright-1.64.1-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
+![Playwright](https://img.shields.io/badge/Playwright-1.65.0-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
 **Maintained by:** gagexhill  
@@ -129,12 +129,12 @@ Mouse interaction is `repel`, `attract` or `off`. The frame limit is 15, 24, 30 
 |---|---|---|
 | **Node.js** | 22.23.2 | Generation, syntax checks and the runtime test suite; pinned in `.node-version` |
 | **Canvas 2D** | Native | The entire renderer — grid, domes, ripples and glow |
-| **Lively Wallpaper** | Any current | Desktop player, property storage and playback policy |
+| **Lively Wallpaper** | 2.2.1.0 tested | Desktop player, property storage and playback policy |
 | **WebView2** | SDK 1.0.4191.47 | Hosts the wallpaper document and the settings panel; Lively's default player |
 | **C# / .NET Framework** | Roslyn 5.9.0, deterministic | Desktop button, settings panel host and dome telemetry |
 | **PowerShell** | 5.1+ | `install.ps1`, packaging and the installer test suite |
 | **Windows Package Manager** | App Installer | Installs Lively when it is missing |
-| **Playwright** | 1.64.1 | Rendered browser checks |
+| **Playwright** | 1.65.0 | Rendered browser checks |
 | **gifenc** | 1.0.3 | Generates the preview GIF from real frames |
 
 ---
@@ -144,7 +144,7 @@ Mouse interaction is `repel`, `attract` or `off`. The frame limit is 15, 24, 30 
 ```
 wallpaper/                      ← everything that ships to the desktop
 │
-├── grid-config.js              ← frozen schema, defaults, 8 presets (40 lines, no build)
+├── grid-config.js              ← frozen schema, defaults and eight presets
 ├── grid-wallpaper.js           ← Canvas render loop, dome simulation, telemetry source
 ├── grid-settings.js            ← the settings UI, shared by browser preview and native panel
 ├── grid-wallpaper.html/.css    ← document and styling for both surfaces
@@ -274,7 +274,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 If Lively opens its first-run wizard, finish it and repeat the same setup step.
 
-For a continuous wallpaper across monitors, open Lively's library, click the monitor icon labeled **Active Wallpaper(s)**, expand **Placement Method**, and choose **Span**. Select **Grid Wallpaper** again in the library. On builds with Span support, open the floating settings button on the primary display to customize Grid. In Preview 6, use the **Customize** menu in Lively for Span. Use **Duplicate** to put a separate copy on each display and use Lively's **Customize** menu in that mode.
+For a continuous wallpaper across monitors, open Lively's library, click the monitor icon labeled **Active Wallpaper(s)**, expand **Placement Method**, and choose **Span**. Select **Grid Wallpaper** again in the library. Preview 7 opens the floating settings button on the primary display. Builds with [cross-display launcher support](https://github.com/gagexhill/grid-wallpaper/issues/52) let you drag the button and open panel to another display. In Preview 6 or in **Duplicate** mode, use Lively's **Customize** menu.
 
 [OPERATIONS.md](OPERATIONS.md#install-update-and-remove) covers prerequisites, updates, removal, and troubleshooting.
 
@@ -290,9 +290,9 @@ npm run test:install
 npm run package
 ```
 
-Packaging compiles the native host with Microsoft's Roslyn toolset (5.9.0) against a pinned official WebView2 SDK (1.0.4191.47). Both are build-only, pinned by exact version and SHA512, resolved through NuGet's signed catalog and never redistributed; the first build downloads them into `dist/`. Compilation is deterministic, so an unchanged tree rebuilds to the same helper and the same archive byte for byte. The installable ZIP and its checksum are written to `dist/`. Open `wallpaper/grid-wallpaper.html` for a browser preview.
+Packaging compiles the native host with Microsoft's Roslyn toolset (5.9.0) against a pinned official WebView2 SDK (1.0.4191.47). The build resolves both exact versions through NuGet and checks the pinned SHA512 before use. The release includes the required WebView2 libraries and their license. Compilation is deterministic, so an unchanged tree rebuilds to the same helper and the same archive byte for byte. The installable ZIP and its checksum are written to `dist/`. Open `wallpaper/grid-wallpaper.html` for a browser preview.
 
-**Where to go next:** [OPERATIONS.md](OPERATIONS.md) owns validation, packaging, release, removal and recovery procedures · [AGENTS.md](AGENTS.md) owns source-editing rules · [CLAUDE.md](CLAUDE.md) is the thin agent entrypoint · [DEVLOG.md](DEVLOG.md) records completed decisions · [open issues](https://github.com/gagexhill/grid-wallpaper/issues) track current work and known limitations, including the untested [display hotplug](https://github.com/gagexhill/grid-wallpaper/issues/30).
+**Where to go next:** [OPERATIONS.md](OPERATIONS.md) owns validation, packaging, release, removal and recovery procedures · [AGENTS.md](AGENTS.md) owns source-editing rules · [CLAUDE.md](CLAUDE.md) is the thin agent entrypoint · [DEVLOG.md](DEVLOG.md) records completed decisions · [open issues](https://github.com/gagexhill/grid-wallpaper/issues) track current work. [Display hotplug acceptance](https://github.com/gagexhill/grid-wallpaper/issues/30) covers two displays. Three displays remain unverified.
 
 ---
 
@@ -331,7 +331,7 @@ The installed package is flat. The folders above exist only in a source checkout
 | **Custom URI protocol activation** | `hostSettings.settingsUri` in `grid-config.js`, parsed by `windows/desktop-launcher.cs` |
 | **WebView2 embedding and suspension** | `windows/settings-window.cs` — hidden grace period, then suspend |
 | **Loopback WebSocket with a session capability** | `windows/dome-telemetry.cs` — `HttpListener`, endpoint checks, strict frame validation |
-| **Per-monitor DPI and work-area geometry** | Panel anchoring in `windows/settings-window.cs` |
+| **Monitor work-area geometry** | Panel anchoring in `windows/settings-window.cs` |
 | **`prefers-reduced-motion`** | `wallpaper/grid-wallpaper.css` and the settings UI |
 | **Supply-chain integrity** | SHA256 per release, `wallpaper-files.json` allowlist, hash verification in `install.ps1`, SHA512-pinned build dependencies in `scripts/build-settings.ps1` |
 | **Deterministic compilation** | `/deterministic` and `/pathmap` in `scripts/build-settings.ps1` — an unchanged tree rebuilds byte for byte |
