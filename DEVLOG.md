@@ -5,7 +5,7 @@
 - The Owner installed preview 6 from the published artifact and confirmed the desktop animates, which accepts it. The installed runtime matched all sixteen published files byte for byte, the helper matched the reproducible build digest, and the machine-specific host configuration and session bootstrap were preserved.
 - Withdrew previews 1 to 5 now that a fixed, accepted release exists. Previews 1 to 4 predate MIT licensing and were never valid rollback targets; preview 5 was kept only until preview 6 was accepted. Their version tags remain and can never be reused, so the history stays legible and no version number can be recycled.
 - Rollback never depended on a published download; it depends on retaining the reviewed package that is running. Corrected the runbook to say so rather than naming a release that is no longer published, since a withdrawn release would otherwise read as an available rollback target.
-- Preview 6 is the only published release. It carries the startup-display fix, the corrected native product metadata that preview 5 shipped as zeroes, and a reproducible package whose recorded digest a rebuild can verify.
+- At this checkpoint, Preview 6 was the only published release. It carried the startup-display fix, corrected native product metadata, and a reproducible package whose recorded digest a rebuild could verify.
 
 ## 2026-09-19 — Browser assertions survive a loaded host
 
@@ -17,7 +17,7 @@
 
 ## 2026-09-18 - README restructured to the adopted structure
 
-- The Owner adopted one README structure for every repository, owned by the global `readme-structure` skill and made company policy in `ventryn-cloud/STANDARDS.md`. This README now follows it: thesis, badge and ownership block, table of contents, overview, problem, core concept, themes, tech stack, architecture, features, annotated source excerpts, getting started, file structure, concepts and owner. Tracked by issue #35.
+- The Owner adopted a shared README structure. This README uses its thesis, badge and ownership block, table of contents, overview, problem, core concept, themes, tech stack, architecture, features, annotated source excerpts, getting started, file structure, concepts and owner. Tracked by issue #35.
 - Removal ownership moved to OPERATIONS.md. The old README carried the ordered removal commands and OPERATIONS.md said so in two places; the new structure has no section for them, so OPERATIONS.md now carries the commands themselves and both pointers were corrected in the same change. The install entry command stays in README, which OPERATIONS.md still states.
 - Writing the Tech Stack and Build sections caught stale text the old README had carried: it still described packaging as using the Windows .NET Framework compiler, which the deterministic-build change earlier the same day replaced with the pinned Roslyn toolset. Versions in the README are now read from `.node-version`, `package.json` and `scripts/build-settings.ps1` rather than prose.
 - Copyright stays `gagexhill` rather than a legal name. This repository is public and `LICENSE.txt` names that holder; changing an attribution on a published MIT release is a licensing decision, not a documentation one.
