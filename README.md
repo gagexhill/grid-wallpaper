@@ -6,7 +6,7 @@
 
 <div align="center">
 
-![Grid Wallpaper](https://img.shields.io/badge/Grid%20Wallpaper-1.0.0--preview.7-9ecdb8?style=for-the-badge&logo=windowsterminal&logoColor=white)
+![Grid Wallpaper](https://img.shields.io/badge/Grid%20Wallpaper-1.0.0--preview.8-9ecdb8?style=for-the-badge&logo=windowsterminal&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-22.23.2-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 ![Canvas](https://img.shields.io/badge/Canvas-2D-e8b89a?style=for-the-badge&logo=html5&logoColor=white)
 ![C#](https://img.shields.io/badge/C%23-.NET%20Framework-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)
@@ -264,9 +264,9 @@ function frame(now) {
 
 1. Download the Windows ZIP from [Releases](https://github.com/gagexhill/grid-wallpaper/releases).
 2. In File Explorer, right-click the ZIP and choose **Extract All**.
-3. Open **Install-Grid.cmd** if it is included in the extracted folder. For the published Preview 6 ZIP, run the PowerShell command below.
+3. Open **Install-Grid.cmd** in the extracted folder, or run the PowerShell command below.
 
-> The project distributes an unsigned ZIP. Windows may warn when opening it. Keep Windows protections enabled, use the download from this repository, and compare the ZIP's SHA256 with the accompanying `.sha256` release asset.
+> The helper and installer in the ZIP are unsigned. Windows may warn when opening them. Keep Windows protections enabled, use the download from this repository, and compare the ZIP's SHA256 with the accompanying `.sha256` release asset.
 
 Run this from PowerShell in the extracted folder:
 
@@ -276,7 +276,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 If Lively opens its first-run wizard, finish it and repeat the same setup step.
 
-For a continuous wallpaper across monitors, open Lively's library, click the monitor icon labeled **Active Wallpaper(s)**, expand **Placement Method**, and choose **Span**. Select **Grid Wallpaper** again in the library. Preview 7 opens the floating settings button on the primary display. Builds with [cross-display launcher support](https://github.com/gagexhill/grid-wallpaper/issues/52) let you drag the button and open panel to another display. In Preview 6 or in **Duplicate** mode, use Lively's **Customize** menu.
+For a continuous wallpaper across monitors, open Lively's library, click the monitor icon labeled **Active Wallpaper(s)**, expand **Placement Method**, and choose **Span**. Select **Grid Wallpaper** again in the library. In Screen and Span modes, drag the floating settings button to another display; its open panel follows. In **Duplicate** mode, use Lively's **Customize** menu.
 
 [OPERATIONS.md](OPERATIONS.md#install-update-and-remove) covers prerequisites, updates, removal, and troubleshooting.
 
