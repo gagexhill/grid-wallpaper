@@ -62,9 +62,87 @@ function Assert-SettingsLink {
     }
 }
 
+function Get-FixedDrivePath([string]$Path) {
+    if ($Path -notmatch '^[A-Za-z]:[\\/][^:"<>|?*]*\z') {
+        throw 'Choose a library on a fixed local drive in Lively, then rerun setup.'
+    }
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($fullPath)
+    if ([IO.DriveInfo]::new($root).DriveType -ne [IO.DriveType]::Fixed) {
+        throw 'Choose a library on a fixed local drive in Lively, then rerun setup.'
+    }
+    return $fullPath
+}
+
+function Assert-SettingsAccess([string]$Path, $Acl, [int]$WriteRights) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { $currentUser = $identity.User.Value } finally { $identity.Dispose() }
+    $trustedOwners = @($currentUser, 'S-1-5-18', 'S-1-5-32-544',
+        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464') # Windows TrustedInstaller
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($Acl.GetSecurityDescriptorBinaryForm(), 0)
+    $writeMask = $WriteRights -bor 0x50000000 # GENERIC_ALL and GENERIC_WRITE
+    if ($null -eq $descriptor.DiscretionaryAcl -or $descriptor.Owner.Value -notin $trustedOwners) {
+        throw "Use a library whose setup files and directories are owned and protected by your account or Windows administrators: $Path"
+    }
+    foreach ($rule in $Acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            -not ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -and
+            $rule.IdentityReference.Value -notin $trustedOwners -and ($rule.FileSystemRights -band $writeMask)) {
+            throw "Use a library whose setup files and directories cannot be modified by other accounts: $Path"
+        }
+    }
+}
+
+function Assert-LocalSettingsDirectory([string]$Path) {
+    $fullPath = Get-FixedDrivePath $Path
+    $root = [IO.Path]::GetPathRoot($fullPath)
+    $directoryRights = [Security.AccessControl.FileSystemRights]
+    $replaceRights = $directoryRights::Delete -bor $directoryRights::DeleteSubdirectoriesAndFiles -bor
+        $directoryRights::ChangePermissions -bor $directoryRights::TakeOwnership -bor
+        $directoryRights::WriteAttributes -bor $directoryRights::WriteExtendedAttributes
+    $current = $root
+    foreach ($component in $fullPath.Substring($root.Length).TrimEnd('\').Split('\')) {
+        if (-not $component) { continue }
+        $next = [IO.Path]::Combine($current, $component)
+        $acl = [IO.Directory]::GetAccessControl($current)
+        Assert-SettingsAccess $current $acl $replaceRights
+        try { $attributes = [IO.File]::GetAttributes($next) }
+        catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] {
+            Assert-SettingsAccess $current $acl ($replaceRights -bor $directoryRights::CreateDirectories)
+            return
+        }
+        if (($attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            -not ($attributes -band [IO.FileAttributes]::Directory)) {
+            throw 'Choose a library with regular local directories in Lively, then rerun setup.'
+        }
+        $current = $next
+    }
+    Assert-SettingsAccess $current ([IO.Directory]::GetAccessControl($current)) ($replaceRights -bor $directoryRights::Write)
+}
+
+function Get-SettingsHostPath([string]$Destination) {
+    Assert-LocalSettingsDirectory $Destination
+    $fileRights = [Security.AccessControl.FileSystemRights]
+    $writeRights = $fileRights::Write -bor $fileRights::Delete -bor $fileRights::ChangePermissions -bor $fileRights::TakeOwnership
+    $fullPath = [IO.Path]::GetFullPath($Destination)
+    $executable = [IO.Path]::Combine($fullPath, 'grid-settings.exe')
+    try { $null = [IO.File]::GetAttributes($executable) }
+    catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { return $executable }
+    foreach ($file in ($runtimeFiles + 'windows-host.json')) {
+        $filePath = [IO.Path]::Combine($fullPath, $file)
+        try { $attributes = [IO.File]::GetAttributes($filePath) }
+        catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { continue }
+        if ($attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Installed settings host files must be regular local files. Rerun setup from a complete package.'
+        }
+        Assert-SettingsAccess $filePath ([IO.File]::GetAccessControl($filePath)) $writeRights
+    }
+    return $executable
+}
+
 function Register-SettingsLink($Destination) {
     Assert-SettingsLink
-    $executable = Join-Path $Destination 'grid-settings.exe'
+    $executable = Get-SettingsHostPath $Destination
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw 'The settings host is missing. Extract the complete package and rerun setup.' }
     $commandKey = Join-Path $settingsKey 'shell\open\command'
     $null = New-Item -Path $commandKey -Force
@@ -81,9 +159,19 @@ function Register-SettingsLink($Destination) {
     if ((Get-Item -LiteralPath $startupKey).GetValue($startupName) -cne $warmCommand) { throw 'Settings warm-start verification failed.' }
 }
 
-function Remove-SettingsLink {
+function Remove-SettingsLink([string]$Destination) {
     if (-not (Test-Path -LiteralPath $settingsKey)) { return }
     Assert-SettingsLink
+    $commandKey = Join-Path $settingsKey 'shell\open\command'
+    $registeredCommand = if (Test-Path -LiteralPath $commandKey) { (Get-Item -LiteralPath $commandKey).GetValue('') }
+    if ($registeredCommand) {
+        $expectedCommand = if ($Destination) { '"' + [IO.Path]::Combine($Destination, 'grid-settings.exe') + '"' }
+        if ($expectedCommand -and ($registeredCommand -ieq $expectedCommand -or $registeredCommand -ieq ($expectedCommand + ' --uri "%1"'))) {
+            Close-SettingsHost $Destination -ForRemoval
+        } else {
+            Write-Warning 'Setup will remove the old settings registration without opening it. Close any old Grid settings window manually.'
+        }
+    }
     if ((Test-Path -LiteralPath $startupKey) -and $null -ne (Get-Item -LiteralPath $startupKey).GetValue($startupName, $null)) {
         Remove-ItemProperty -LiteralPath $startupKey -Name $startupName -ErrorAction Stop
     }
@@ -106,8 +194,13 @@ function Write-HostConfig($Destination, $Lively) {
     [IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json))
 }
 
-function Close-SettingsHost($Destination) {
-    $executable = Join-Path $Destination 'grid-settings.exe'
+function Close-SettingsHost($Destination, [switch]$ForRemoval) {
+    try { $executable = Get-SettingsHostPath $Destination }
+    catch {
+        if (-not $ForRemoval) { throw }
+        Write-Warning 'Setup could not verify the installed settings host. Close any old Grid settings window manually.'
+        return
+    }
     $running = @(Get-Process -Name 'grid-settings' -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $executable })
     if (-not $running.Count) { return }
     $command = Start-Process -FilePath $executable -ArgumentList '--close' -WindowStyle Hidden -PassThru
@@ -116,7 +209,7 @@ function Close-SettingsHost($Destination) {
 }
 
 function Warm-SettingsHost($Destination) {
-    $executable = Join-Path $Destination 'grid-settings.exe'
+    $executable = Get-SettingsHostPath $Destination
     $null = Start-Process -FilePath $executable -ArgumentList '--warm' -WorkingDirectory $Destination -WindowStyle Hidden -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     do {
@@ -204,15 +297,13 @@ function Get-LivelyState($Lively, [switch]$AllowInitializing) {
             if (-not $AllowInitializing) { throw }
         }
     }
-    if (-not [IO.Path]::IsPathRooted($libraryDirectory)) {
-        throw "Lively's wallpaper library must be an absolute path: $libraryDirectory"
-    }
-    $libraryDirectory = [IO.Path]::GetFullPath($libraryDirectory).TrimEnd('\')
-    $commandDirectory = Join-Path $libraryDirectory 'wallpapers\grid-wallpaper'
+    $libraryDirectory = Get-FixedDrivePath $libraryDirectory
+    $commandDirectory = [IO.Path]::Combine($libraryDirectory, 'wallpapers\grid-wallpaper')
     $destination = $commandDirectory
     if ($Lively -and $Lively.Store -and $destination.StartsWith($normalDataDirectory + '\', [StringComparison]::OrdinalIgnoreCase)) {
         $destination = Join-Path $Lively.DataDirectory $destination.Substring($normalDataDirectory.Length + 1)
     }
+    Assert-LocalSettingsDirectory $destination
     return [pscustomobject]@{
         Destination = $destination
         CommandDirectory = $commandDirectory
@@ -279,6 +370,7 @@ function Copy-Runtime($Destination) {
     }
 
     $null = New-Item -ItemType Directory -Path $Destination -Force
+    Assert-LocalSettingsDirectory $Destination
     $transaction = Join-Path (Split-Path $Destination -Parent) ('.grid-install-' + [Guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $transaction
     $staged = @{}
@@ -286,6 +378,7 @@ function Copy-Runtime($Destination) {
     $added = @()
     $preserve = $false
     try {
+        Assert-LocalSettingsDirectory $transaction
         foreach ($file in $runtimeFiles) {
             $sourcePath = Get-RuntimeSource $file
             $targetPath = Join-Path $Destination $file
@@ -390,9 +483,16 @@ try {
         Assert-SettingsLink
         if ($Preview) { Write-Output 'Would remove only the per-user Grid Wallpaper settings link and warm-start entry.' }
         else {
-            $registeredCommand = if (Test-Path -LiteralPath (Join-Path $settingsKey 'shell\open\command')) { (Get-Item -LiteralPath (Join-Path $settingsKey 'shell\open\command')).GetValue('') } else { '' }
-            if ($registeredCommand -match '^"([^"]+\\grid-settings\.exe)"(?: --uri "%1")?$') { Close-SettingsHost (Split-Path $matches[1] -Parent) }
-            Remove-SettingsLink
+            $destination = $null
+            if (Test-Path -LiteralPath $settingsKey) {
+                try {
+                    $state = Get-LivelyState (Find-Lively)
+                    if ($state.SettingsReady) { $destination = $state.Destination }
+                } catch {
+                    Write-Verbose 'The current Lively library could not be verified for graceful helper shutdown.'
+                }
+            }
+            Remove-SettingsLink $destination
             Write-Output 'Removed the settings link and warm-start entry. Wallpapers and Lively were left in place.'
         }
         return

@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-11-10 — Installer storage requirements
+
+- Setup validates a fixed local volume, regular directory ancestry, Windows ownership and modification permissions before installing or registering the settings helper. The same checks protect existing runtime files before helper activation.
+- Default and private custom libraries retain their setup and saved-settings behavior. Store installations retain separate logical command paths and physical copy paths.
+- Removal closes a helper only when its registration matches the verified current library. Older registrations can be removed with an explicit manual-close notice.
+- Regression fixtures exercise path forms, junction ancestry, shared write grants, ownership, registration and cleanup. They use private per-user fixture directories so the test location meets the installer's storage requirements.
+
 ## 2026-09-19 — Preview 6 accepted; earlier previews withdrawn
 
 - The Owner installed preview 6 from the published artifact and confirmed the desktop animates, which accepts it. The installed runtime matched all sixteen published files byte for byte, the helper matched the reproducible build digest, and the machine-specific host configuration and session bootstrap were preserved.
