@@ -1,5 +1,10 @@
 # Decisions
 
+## 2026-11-10 — Code of Conduct attribution
+
+- Kept the software's standard MIT `LICENSE.txt` and the separate packaged WebView2 notice. The shortened Code of Conduct names its Contributor Covenant 2.1 source, the source's CC BY 4.0 terms and the same terms for this adaptation, so the README's license summary does not imply MIT covers the borrowed policy text. This is an attribution clarification, not a change to the installed runtime or published Preview 8 assets.
+- The same README ships inside the flat install ZIP. Its links to source-only guidance now use the public repository and the build section states that its commands need a source checkout; the packaged runbook and MIT license retain local links.
+
 ## 2026-11-10 — Preview 8 repository audit and public guidance
 
 - Kept the published Preview 8 release and MIT copyright holder unchanged. The current release is immutable at source `82871ba62b9f668b99b83532bd5b4d908c8607c8`; its 21-file ZIP matches SHA256 `a2f2dec4439ffa5fb5f3586a456f89e46e26e89a52fa4790682ef6268fd24842`. The two preview assets are generated from the wallpaper runtime, and the included WebView2 libraries carry their separate license. The Node build tools do not ship in the ZIP.
