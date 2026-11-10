@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-11-10 — Preview 8 repository audit and public guidance
+
+- Kept the published Preview 8 release and MIT copyright holder unchanged. The current release is immutable at source `82871ba62b9f668b99b83532bd5b4d908c8607c8`; its 21-file ZIP matches SHA256 `a2f2dec4439ffa5fb5f3586a456f89e46e26e89a52fa4790682ef6268fd24842`. The two preview assets are generated from the wallpaper runtime, and the included WebView2 libraries carry their separate license. The Node build tools do not ship in the ZIP.
+- The public README now distinguishes offline use from the helper's authenticated local telemetry connection and states the exact installed-user limits. #57 owns clean Windows and three-display acceptance; #20 and #52 retain their narrower accepted scopes. The GitHub About description now names the movable desktop controls.
+- The native runbook now captures the GUI helper's diagnostic stdout explicitly. Direct piping produced no JSON in a noninteractive PowerShell check; redirected output returned the live status and exit code.
+- A current-source security scan reviewed all 46 tracked files at the released source and found no validated vulnerability. Redacted Gitleaks history and extracted-package scans and the npm lockfile audit found no reported secrets or dependency advisories in their reviewed scope. Static review and a zero-alert result do not prove installed Windows permissions or a clean-user installation.
+- Corrected the public issue #35 and PR #36 descriptions that still exposed an unrelated project and a machine-local path. Current issue, PR and issue-comment text was checked again for those disclosure patterns. Historical Git objects and immutable release identities remain intact.
+
 ## 2026-11-10 — Preview 8 source identity
 
 - Advanced the package and README to Preview 8 so the cross-display launcher, installer storage checks and unsigned-distribution decision can ship together under a new immutable version. Preview 7 remains the prior published package; the version change alone does not establish a new downloadable release or installed acceptance.
