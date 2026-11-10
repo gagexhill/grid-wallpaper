@@ -32,17 +32,24 @@ internal sealed class WallpaperDisplay
     internal static WallpaperDisplay Current()
     {
         Screen primary = Screen.PrimaryScreen;
-        if (primary == null) throw new SettingsFailure("Windows has not identified the primary display yet.");
+        string id = DeviceId(primary);
+        if (id == null) throw new SettingsFailure("Windows has not identified the primary display yet.");
+        return new WallpaperDisplay { Id = id, Name = primary.DeviceName, Count = Screen.AllScreens.Length };
+    }
+
+    internal static string DeviceId(Screen screen)
+    {
+        if (screen == null) return null;
         for (uint index = 0; index < 64; index++)
         {
             DisplayDevice device = new DisplayDevice();
             device.Size = Marshal.SizeOf(typeof(DisplayDevice));
             // EDD_GET_DEVICE_INTERFACE_NAME and attached/non-mirroring filtering match Lively 2.2.1.
-            if (!EnumDisplayDevices(primary.DeviceName, index, ref device, 1)) break;
+            if (!EnumDisplayDevices(screen.DeviceName, index, ref device, 1)) break;
             if ((device.Flags & 1) != 0 && (device.Flags & 8) == 0 && !String.IsNullOrWhiteSpace(device.Id))
-                return new WallpaperDisplay { Id = device.Id, Name = primary.DeviceName, Count = Screen.AllScreens.Length };
+                return device.Id;
         }
-        throw new SettingsFailure("Windows has not identified the primary display yet.");
+        return null;
     }
 
     internal Dictionary<string, object> Select(IList layouts, bool span = false)
